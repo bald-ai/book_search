@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import os
 import logging
+import json
 
 # Import the search function from search_chunks.py
 from search_chunks import search_book_chunks
@@ -12,13 +13,40 @@ logging.basicConfig(level=logging.INFO)
 
 # Define the directory where embedding files are stored
 EMBEDDINGS_DIR = "embedded_books"
+FEEDBACK_FILE = 'feedback_data.json'
+
+# Helper function to load feedback data
+def load_feedback():
+    if not os.path.exists(FEEDBACK_FILE):
+        return []
+    try:
+        with open(FEEDBACK_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logging.error(f"Error loading feedback file: {e}")
+        return [] # Return empty list on error
+
+# Helper function to save feedback data
+def save_feedback(data):
+    try:
+        with open(FEEDBACK_FILE, 'w') as f:
+            json.dump(data, f, indent=4)
+    except IOError as e:
+        logging.error(f"Error saving feedback file: {e}")
 
 @app.route('/')
 def index():
     """Renders the main HTML page."""
-    # We could pass the list of available books here if needed,
-    # but the current JS handles it based on expected filenames.
-    return render_template('index.html')
+    # Get list of available book embedding files
+    available_books = []
+    if os.path.exists(EMBEDDINGS_DIR):
+        for filename in os.listdir(EMBEDDINGS_DIR):
+            if filename.endswith('_embeded.json'):
+                # Extract a 'cleaner' book name for display if possible
+                book_name = filename.replace('_embeded.json', '').replace('_', ' ').title()
+                available_books.append({'filename': filename, 'display_name': book_name})
+    
+    return render_template('index.html', available_books=available_books)
 
 @app.route('/search', methods=['POST'])
 def search():
@@ -77,6 +105,38 @@ def search():
         logging.error(f"Error during search for query '{query}' in '{book_filename}': {e}", exc_info=True)
         return jsonify({"error": "An internal error occurred during search."}), 500
 
+@app.route('/feedback', methods=['POST'])
+def handle_feedback():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data received"}), 400
+
+    query = data.get('query')
+    chunk_index = data.get('chunk_index')
+    is_correct = data.get('is_correct')
+    book_filename = data.get('book_filename')
+
+    if query is None or chunk_index is None or is_correct is None or book_filename is None:
+        logging.warning(f"Received incomplete feedback data: {data}")
+        return jsonify({"error": "Missing required feedback fields (query, chunk_index, is_correct, book_filename)"}), 400
+
+    feedback_entry = {
+        "query": query,
+        "book_filename": book_filename,
+        "chunk_index": chunk_index,
+        "is_correct": is_correct
+        # Optional: Add timestamp
+        # "timestamp": datetime.datetime.now().isoformat()
+    }
+
+    logging.info(f"Received feedback: {feedback_entry}")
+
+    # Load existing feedback, append new entry, and save
+    all_feedback = load_feedback()
+    all_feedback.append(feedback_entry)
+    save_feedback(all_feedback)
+
+    return jsonify({"message": "Feedback received successfully"}), 200
 
 if __name__ == '__main__':
     # Ensure the embeddings directory exists

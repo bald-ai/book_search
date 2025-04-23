@@ -9,7 +9,7 @@ Core components:
 4. LLM refinement (using top K chunks + query) to select the single best chunk.
 ---
 5. Web application (Flask + HTML/CSS/JS) for user interface.
-6. Feedback mechanism (thumbs up/down on results).
+6. Feedback mechanism (thumbs up/down on results, saved to JSON).
 ---
 7. Hosting for the website.
 
@@ -69,11 +69,14 @@ Key features:
 - Search Trigger: Search is initiated by pressing Enter in the input field or clicking the button.
 - Loading Indicator: A spinner and text appear while the backend processes the search.
 - Result Display: Shows the single text chunk returned by the backend. No keyword highlighting is applied.
-- Feedback: Thumbs up/down buttons are present on the result card, with a text area for detailed
-  negative feedback.
+- Feedback:
+  - Thumbs up/down buttons are present on the result card.
+  - Clicking either button sends the `query`, `book_filename`, `chunk_index`, and correctness 
+    (true/false) to the backend `/feedback` endpoint.
+  - Buttons are visually updated and disabled after feedback is sent.
 
 Backend (`app.py`):
-- Serves the main `index.html` page.
+- Serves the main `index.html` page, passing the list of available books.
 - Provides a `/search` endpoint (POST) that:
     - Receives the `query` and selected `book_filename` as JSON.
     - Validates input and constructs the full path to the embedding file.
@@ -82,8 +85,16 @@ Backend (`app.py`):
     - Returns the result data as JSON to the frontend.
     - Includes basic logging and error handling.
 
+- Provides a `/feedback` endpoint (POST) that:
+  - Receives `query`, `book_filename`, `chunk_index`, and `is_correct` as JSON.
+  - Validates the input data.
+  - Loads existing feedback data from `feedback_data.json`.
+  - Appends the new feedback entry to the list.
+  - Saves the updated list back to `feedback_data.json`.
+  - Returns a success message.
+
 Frontend (`index.html` JavaScript):
-- Dynamically creates book selection buttons.
+- Dynamically creates book selection buttons based on data passed from Flask.
 - Handles book selection state (only one active), updates search bar placeholder, enables/disables
   search input/button, and shows/hides the 'Select Book' prompt.
 - Contains `triggerSearch` function called on Enter/button click:
@@ -99,7 +110,14 @@ Frontend (`index.html` JavaScript):
     - Populates the card with the text, book title, chunk index, and score.
     - Appends the card to the results area.
     - Calls `setupFeedbackHandlers` to enable feedback buttons on the new card.
-- Contains `setupFeedbackHandlers` function for like/dislike/feedback text area logic.
+- Contains `setupFeedbackHandlers` function that adds event listeners to the like/dislike buttons on each
+  result card.
+  - When a button is clicked, it gathers the necessary data (query, index, etc.).
+  - It calls the `sendFeedback` function.
+- Contains `sendFeedback` async function:
+  - Takes feedback data as arguments.
+  - Sends a POST request with the data to the `/feedback` endpoint.
+  - Handles the response and potential errors, updating the UI accordingly (disabling buttons).
 
 Dependencies are managed through `requirements.txt` (including `flask`, `cohere`, `openai`, `numpy`,
 `python-dotenv`, etc.) and API keys via `.env`.
@@ -123,6 +141,7 @@ For production deployment:
 
 Future Expansion:
 - Implement backend logic to handle and store user feedback.
+- Analyze and utilize the collected feedback data (from `feedback_data.json`).
 - Improve error handling and user messaging.
 - Make input file handling more dynamic in `manual_chunker.py` and `embed_chunks.py`.
 - Potentially add user authentication and book management features.

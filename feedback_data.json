@@ -1,0 +1,26 @@
+[
+    {
+        "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
+        "book_filename": "promise_of_blood_embeded.json",
+        "chunk_index": 12,
+        "is_correct": true
+    },
+    {
+        "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
+        "book_filename": "promise_of_blood_embeded.json",
+        "chunk_index": 12,
+        "is_correct": false
+    },
+    {
+        "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
+        "book_filename": "promise_of_blood_embeded.json",
+        "chunk_index": 12,
+        "is_correct": false
+    },
+    {
+        "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
+        "book_filename": "promise_of_blood_embeded.json",
+        "chunk_index": 12,
+        "is_correct": false
+    }
+]

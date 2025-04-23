@@ -171,9 +171,8 @@
         </div>
 
         <!-- Area where dynamic result will be loaded -->
-        <div id="results-container">
-            <!-- Placeholder/Loading state can go here -->
-             <p id="results-placeholder" class="text-center text-gray-500 italic hidden">Select a book and enter a query to see results.</p>
+        <div id="results-container" class="mt-6 space-y-4">
+            <!-- Results will be dynamically inserted here -->
         </div>
 
     </section>
@@ -182,6 +181,31 @@
         <p>&copy; 2025 Codex Search. All rights reserved.</p>
         <p>Powered by Vector Search & LLMs</p>
     </footer>
+
+    <!-- Hidden template for search results -->
+    <template id="result-template">
+        <div class="bg-gray-800 p-4 rounded-lg shadow relative result-card">
+            <p class="text-gray-400 text-sm mb-2">
+                Book: <span class="font-semibold book-title">[Book Title]</span> |
+                Chunk Index: <span class="font-semibold chunk-index">[Chunk Index]</span>
+                <!-- | Score: <span class="font-semibold score">[Score]</span> -->
+            </p>
+            <p class="text-gray-200 whitespace-pre-wrap result-text">[Result Text]</p>
+            <!-- Restore SVG buttons -->
+            <div class="absolute top-2 right-2 flex space-x-2 feedback-buttons">
+                <button title="Good result" class="like-button p-2 rounded-full text-gray-400 hover:bg-green-700 hover:text-white transition duration-150 ease-in-out">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                    </svg>
+                </button>
+                <button title="Bad result" class="dislike-button p-2 rounded-full text-gray-400 hover:bg-red-700 hover:text-white transition duration-150 ease-in-out">
+                   <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                     <path d="M18 9.5a1.5 1.5 0 11-3 0v-6a1.5 1.5 0 013 0v6zM14 9.667v-5.43a2 2 0 00-1.106-1.79l-.05-.025A4 4 0 0011.057 2H5.642a2 2 0 00-1.962 1.608l-1.2 6A2 2 0 004.44 12H8v4a2 2 0 002 2 1 1 0 001-1v-.667a4 4 0 01.8-2.4l1.2-2.4A4 4 0 0014 9.667z" />
+                   </svg>
+                </button>
+            </div>
+        </div>
+    </template>
 
     <script>
         // --- Available Books (Dynamically Determined) ---
@@ -334,7 +358,7 @@
 
         // --- Function to Display Results ---
         function displayResults(results, bookTitle) {
-            resultsContainer.innerHTML = '';
+            resultsContainer.innerHTML = ''; // Clear previous results
 
             if (!results || results.length === 0) {
                 const noResultsMsg = document.createElement('p');
@@ -344,92 +368,222 @@
                 return;
             }
 
-            if (!resultCardTemplate) {
-                console.error('Result card template not found!');
-                resultsContainer.textContent = 'Error displaying results: Template missing.';
+            const template = document.getElementById('result-template'); // Get the template element
+
+            if (!template || !template.content) { // Check if template and its content exist
+                console.error('Result card template (<template id="result-template">) or its content not found!');
+                resultsContainer.textContent = 'Error displaying results: Template invalid.';
                 return;
             }
 
             results.forEach(result => {
-                const card = resultCardTemplate.cloneNode(true);
-                card.classList.remove('hidden');
-                card.dataset.feedbackInitialized = 'false';
+                // 1. Clone the template content
+                const cardContent = template.content.cloneNode(true);
+                
+                // 2. Get the actual card div from the cloned fragment
+                const cardElement = cardContent.querySelector('.result-card'); 
+                
+                if (!cardElement) {
+                    console.error('Could not find .result-card div within the template content.');
+                    return; // Skip this result if the template is malformed
+                }
 
-                const resultTextElement = card.querySelector('.result-text');
-                const resultInfoElement = card.querySelector('.result-info');
+                cardElement.dataset.feedbackInitialized = 'false'; // Initialize feedback state
 
+                // 3. Find elements *within* the cloned card
+                const resultTextElement = cardElement.querySelector('.result-text');
+                const bookTitleElement = cardElement.querySelector('.book-title');
+                const chunkIndexElement = cardElement.querySelector('.chunk-index');
+                // const scoreElement = cardElement.querySelector('.score'); // Uncomment if using score
+
+                // 4. Populate the elements
                 if (resultTextElement) {
-                    resultTextElement.textContent = result.text;
+                    resultTextElement.textContent = result.text || 'N/A';
                 } else {
                     console.warn('Could not find .result-text element in card template');
                 }
-
-                if (resultInfoElement) {
-                    const percent = result.percent_into_book ? `${result.percent_into_book}%` : 'N/A';
-                    const scoreDisplay = result.score !== undefined ? result.score.toFixed(3) : 'N/A';
-                    resultInfoElement.textContent = `${bookTitle} - Chunk ${result.chunk_index} (Score: ${scoreDisplay}, ${percent} into book)`;
+                 if (bookTitleElement) {
+                    bookTitleElement.textContent = bookTitle || 'Unknown Book';
                 } else {
-                    console.warn('Could not find .result-info element in card template');
+                     console.warn('Could not find .book-title element in card template');
                 }
+                if (chunkIndexElement) {
+                    chunkIndexElement.textContent = result.chunk_index !== undefined ? result.chunk_index : 'N/A';
+                } else {
+                    console.warn('Could not find .chunk-index element in card template');
+                }
+                // if (scoreElement) {
+                //     scoreElement.textContent = result.score !== undefined ? result.score.toFixed(3) : 'N/A';
+                // } else {
+                //     console.warn('Could not find .score element in card template');
+                // }
 
-                resultsContainer.appendChild(card);
+                // 5. Append the fully populated cardElement to the container
+                resultsContainer.appendChild(cardElement);
             });
 
+            // 6. Call setupFeedbackHandlers *after* all cards are added
             setupFeedbackHandlers(resultsContainer);
         }
 
         // --- Feedback Handling ---
         function setupFeedbackHandlers(containerElement) {
+            console.log('Setting up feedback handlers for container:', containerElement);
             const resultCards = containerElement.querySelectorAll('.result-card');
-            resultCards.forEach(card => {
-                const thumbsUpButton = card.querySelector('.thumbs-up');
-                const thumbsDownButton = card.querySelector('.thumbs-down');
-                const feedbackArea = card.querySelector('.feedback-input-area');
-                const feedbackTextarea = card.querySelector('.feedback-textarea');
-                const sendFeedbackButton = card.querySelector('.send-feedback-button');
-                const resultInfo = card.querySelector('.result-info')?.textContent || 'Unknown Result';
+            console.log(`Found ${resultCards.length} result cards in container.`);
 
-                if (card.dataset.feedbackInitialized) return;
-                card.dataset.feedbackInitialized = 'true';
+            resultCards.forEach((card, index) => {
+                // Skip the template card itself if it's somehow included
+                if (card.closest('template')) return;
 
-                if (thumbsUpButton) {
-                    thumbsUpButton.addEventListener('click', () => {
-                        console.log(`Thumbs Up clicked for: "${resultInfo}"`);
-                        if (feedbackArea) feedbackArea.classList.add('hidden');
-                        if (feedbackTextarea) feedbackTextarea.value = '';
-                        if (sendFeedbackButton) sendFeedbackButton.disabled = true;
-                    });
+                // Check if already initialized
+                if (card.dataset.feedbackInitialized === 'true') {
+                    console.log(`Card ${index} already initialized, skipping.`);
+                    return;
                 }
-                 if (thumbsDownButton) {
-                    thumbsDownButton.addEventListener('click', () => {
-                        console.log(`Thumbs Down clicked for: "${resultInfo}"`);
-                        if (feedbackArea) feedbackArea.classList.remove('hidden');
-                        if (sendFeedbackButton) sendFeedbackButton.disabled = true;
-                    });
-                }
-                if (feedbackTextarea) {
-                    feedbackTextarea.addEventListener('input', () => {
-                        if (sendFeedbackButton) {
-                            sendFeedbackButton.disabled = feedbackTextarea.value.trim() === '';
+                card.dataset.feedbackInitialized = 'true'; // Mark as initialized
+                console.log(`Initializing feedback handlers for card ${index}.`);
+
+
+                const likeButton = card.querySelector('.like-button');
+                const dislikeButton = card.querySelector('.dislike-button');
+                const resultTextElement = card.querySelector('.result-text'); // Keep for context if needed
+                const chunkIndexElement = card.querySelector('.chunk-index'); // Direct selector
+
+                if (!likeButton) console.error(`Card ${index}: Like button not found!`);
+                if (!dislikeButton) console.error(`Card ${index}: Dislike button not found!`);
+                if (!chunkIndexElement) console.error(`Card ${index}: Chunk index element not found!`);
+
+                if (likeButton && chunkIndexElement) {
+                    likeButton.addEventListener('click', () => {
+                        console.log(`Card ${index}: Like button CLICKED`); // Log click
+                        try {
+                            const query = searchInput.value; // Get current query
+                            const chunkIndexText = chunkIndexElement.textContent;
+                            const chunkIndex = parseInt(chunkIndexText);
+                            const bookFilename = selectedBookFilename; // Already stored globally
+
+                            if (isNaN(chunkIndex)) {
+                                console.error(`Card ${index}: Could not parse chunk index from text: "${chunkIndexText}"`);
+                                return; // Don't proceed if index is invalid
+                            }
+                            console.log('Like feedback data:', { query, chunkIndex, bookFilename });
+
+                            sendFeedback(query, chunkIndex, true, bookFilename, card);
+                            // Provide visual feedback (optional)
+                            likeButton.classList.add('text-green-500');
+                            dislikeButton.classList.add('text-gray-600', 'pointer-events-none');
+                            likeButton.classList.add('pointer-events-none'); // Disable after click
+                        } catch (e) {
+                             console.error(`Card ${index}: Error in like button click handler:`, e);
                         }
                     });
+                } else {
+                     console.warn(`Card ${index}: Skipping like button listener due to missing elements.`);
                 }
-                if (sendFeedbackButton) {
-                    sendFeedbackButton.addEventListener('click', () => {
-                        const feedbackText = feedbackTextarea.value.trim();
-                        if (feedbackText) {
-                            console.log(`Sending feedback for "${resultInfo}": ${feedbackText}`);
-                            feedbackTextarea.value = '';
-                            sendFeedbackButton.disabled = true;
-                            feedbackArea.classList.add('hidden');
-                        }
+
+                 if (dislikeButton && chunkIndexElement) {
+                    dislikeButton.addEventListener('click', () => {
+                        console.log(`Card ${index}: Dislike button CLICKED`); // Log click
+                         try {
+                            const query = searchInput.value; // Get current query
+                            const chunkIndexText = chunkIndexElement.textContent;
+                            const chunkIndex = parseInt(chunkIndexText);
+                            const bookFilename = selectedBookFilename; // Already stored globally
+
+                             if (isNaN(chunkIndex)) {
+                                console.error(`Card ${index}: Could not parse chunk index from text: "${chunkIndexText}"`);
+                                return; // Don't proceed if index is invalid
+                            }
+                            console.log('Dislike feedback data:', { query, chunkIndex, bookFilename });
+
+                            sendFeedback(query, chunkIndex, false, bookFilename, card);
+                            // Provide visual feedback (optional)
+                            dislikeButton.classList.add('text-red-500');
+                            likeButton.classList.add('text-gray-600', 'pointer-events-none');
+                            dislikeButton.classList.add('pointer-events-none'); // Disable after click
+                         } catch (e) {
+                             console.error(`Card ${index}: Error in dislike button click handler:`, e);
+                         }
                     });
+                } else {
+                    console.warn(`Card ${index}: Skipping dislike button listener due to missing elements.`);
                 }
             });
         }
 
-        // Initial setup
-        setupFeedbackHandlers(document.body);
+        async function sendFeedback(query, chunkIndex, isCorrect, bookFilename, cardElement) {
+            console.log('Calling sendFeedback with:', { query, chunkIndex, isCorrect, bookFilename }); // Log call
+            // Disable buttons immediately
+            const likeButton = cardElement.querySelector('.like-button');
+            const dislikeButton = cardElement.querySelector('.dislike-button');
+            likeButton.disabled = true;
+            dislikeButton.disabled = true;
+            likeButton.classList.add('opacity-50');
+            dislikeButton.classList.add('opacity-50');
+
+            try {
+                const response = await fetch('/feedback', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        chunk_index: chunkIndex,
+                        is_correct: isCorrect,
+                        book_filename: bookFilename
+                    }),
+                });
+
+                if (!response.ok) {
+                    console.error('Failed to send feedback:', response.statusText);
+                    // Optionally re-enable buttons or show error to user
+                    alert('Failed to save feedback. Please try again.');
+                    likeButton.disabled = false;
+                    dislikeButton.disabled = false;
+                    likeButton.classList.remove('opacity-50');
+                    dislikeButton.classList.remove('opacity-50');
+                     // Revert visual state if needed
+                    if (isCorrect) {
+                        likeButton.classList.remove('text-green-500');
+                        dislikeButton.classList.remove('text-gray-600', 'pointer-events-none');
+                        likeButton.classList.remove('pointer-events-none');
+                    } else {
+                        dislikeButton.classList.remove('text-red-500');
+                        likeButton.classList.remove('text-gray-600', 'pointer-events-none');
+                        dislikeButton.classList.remove('pointer-events-none');
+                    }
+                } else {
+                    console.log('Feedback sent successfully.');
+                    // Keep buttons disabled and visually indicate success (already done by styling)
+                }
+            } catch (error) {
+                console.error('Error sending feedback:', error);
+                alert('An error occurred while saving feedback.');
+                 // Re-enable buttons on error
+                likeButton.disabled = false;
+                dislikeButton.disabled = false;
+                likeButton.classList.remove('opacity-50');
+                dislikeButton.classList.remove('opacity-50');
+                // Revert visual state if needed
+                if (isCorrect) {
+                    likeButton.classList.remove('text-green-500');
+                    dislikeButton.classList.remove('text-gray-600', 'pointer-events-none');
+                    likeButton.classList.remove('pointer-events-none');
+                } else {
+                    dislikeButton.classList.remove('text-red-500');
+                    likeButton.classList.remove('text-gray-600', 'pointer-events-none');
+                    dislikeButton.classList.remove('pointer-events-none');
+                }
+            }
+        }
+
+        // Initial setup - REMOVED call to setupFeedbackHandlers(document.body)
+        // It should only be called when results are displayed.
+        // document.addEventListener('DOMContentLoaded', () => {
+            // Initial setup logic if any, but not feedback handlers
+        // });
 
     </script>
 </body>
