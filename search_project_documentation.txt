@@ -1,0 +1,129 @@
+High level goal:
+High level is the goal to build web based search tool that enables vector search over books. The target user is
+currently people like my girlfriend -- fantasy / sci-fi readers.
+
+Core components:
+1. Chunking the book into smaller parts for embedding model to process including some metadata (chunk index).
+2. Embedding the books.
+3. Vector search user query (retrieve top K chunks).
+4. LLM refinement (using top K chunks + query) to select the single best chunk.
+---
+5. Web application (Flask + HTML/CSS/JS) for user interface.
+6. Feedback mechanism (thumbs up/down on results).
+---
+7. Hosting for the website.
+
+---------
+Manual Chunker (`manual_chunker.py`):
+This script processes a PDF book file specified in its configuration (currently hardcoded list).
+It extracts all text content using `pdfplumber`.
+The text is cleaned (excessive newlines/spaces removed).
+It uses `langchain` and `tiktoken` (v0.9.0+) to split text into chunks (target size, overlap).
+For each chunk, it saves its index (0-based) and text.
+The output is a JSON file per book (e.g., `Promise of Blood_full.json`).
+Each entry contains: `chunk_index`, `text`.
+Note: Input file handling could be made more dynamic (e.g., command-line args).
+
+---
+Embed Chunks (`embed_chunks.py`):
+This script generates vector embeddings for book chunks using the Cohere API (v5.x, `ClientV2`).
+It processes output JSON from the chunker (hardcoded list of `*_full.json` files).
+It loads the Cohere API key from `.env`.
+Initializes the Cohere client.
+Loads chunked data, extracts texts, batches them, and generates embeddings (`embed-v4.0`, float).
+Combines original chunk data (index, text) with the generated embedding vector.
+Saves the combined data to a new output JSON file per book (e.g., `promise_of_blood_embeded.json`).
+Note: Input file handling could be made more dynamic.
+
+---
+Search Chunks (`search_chunks.py`):
+This script provides the `search_book_chunks` function used by the web application.
+It performs semantic search followed by LLM refinement to find the single best chunk.
+Steps:
+- Loads Cohere and DeepSeek API keys from `.env`.
+- Initializes Cohere (`ClientV2`) and DeepSeek (`openai` library) clients.
+- Takes user query and path to a specific book's embedding file as input.
+- Loads the specified book's embedding data.
+- Generates a query embedding (Cohere).
+- Performs vector search (dot product) to find the top N (currently 15) semantically similar chunks.
+- Formats the text of these top N chunks (identified by `chunk_index`) for the LLM.
+- Sends the query and formatted top N chunks to the DeepSeek chat model.
+- Prompts the LLM for step-by-step reasoning and selection of the single best `chunk_index`.
+- Parses the LLM response robustly using regex:
+    - Searches the entire response for the last occurrence of `Final Answer: chunk XX` (case-insensitive).
+    - Handles explicit `Final Answer: chunk none`.
+    - Extracts the integer chunk index.
+- Returns a list containing the data dictionary for the single chunk selected by the LLM.
+- Falls back to returning the top semantic result if LLM fails, returns 'None', or parsing issues occur.
+
+---
+Web Application (`app.py` & `templates/index.html`):
+The web application uses Flask to serve a single-page interface (`index.html`) styled with Tailwind CSS.
+Key features:
+- Header with application title.
+- Dynamic Book Selection: Buttons are generated via JavaScript based on `*_embeded.json` files found
+  in the `embedded_books/` directory.
+- Search Bar & Button: Input field for queries and an explicit Search button. These are disabled
+  until a book is selected.
+- Book Selection Prompt: A message prompts the user to select a book if none is active.
+- Search Trigger: Search is initiated by pressing Enter in the input field or clicking the button.
+- Loading Indicator: A spinner and text appear while the backend processes the search.
+- Result Display: Shows the single text chunk returned by the backend. No keyword highlighting is applied.
+- Feedback: Thumbs up/down buttons are present on the result card, with a text area for detailed
+  negative feedback.
+
+Backend (`app.py`):
+- Serves the main `index.html` page.
+- Provides a `/search` endpoint (POST) that:
+    - Receives the `query` and selected `book_filename` as JSON.
+    - Validates input and constructs the full path to the embedding file.
+    - Calls the `search_book_chunks` function from `search_chunks.py`.
+    - Takes the single result (or empty list) returned by the search function.
+    - Returns the result data as JSON to the frontend.
+    - Includes basic logging and error handling.
+
+Frontend (`index.html` JavaScript):
+- Dynamically creates book selection buttons.
+- Handles book selection state (only one active), updates search bar placeholder, enables/disables
+  search input/button, and shows/hides the 'Select Book' prompt.
+- Contains `triggerSearch` function called on Enter/button click:
+    - Validates that a book is selected and a query exists.
+    - Shows loading indicator, disables inputs.
+    - Sends `query` and `book_filename` to the `/search` backend endpoint using `fetch`.
+    - Calls `displayResults` with the response.
+    - Hides loading indicator, re-enables inputs in a `finally` block.
+- Contains `displayResults` function:
+    - Clears previous results/loading indicator.
+    - Handles 'No results found' or error messages.
+    - Clones a hidden HTML template for the result card.
+    - Populates the card with the text, book title, chunk index, and score.
+    - Appends the card to the results area.
+    - Calls `setupFeedbackHandlers` to enable feedback buttons on the new card.
+- Contains `setupFeedbackHandlers` function for like/dislike/feedback text area logic.
+
+Dependencies are managed through `requirements.txt` (including `flask`, `cohere`, `openai`, `numpy`,
+`python-dotenv`, etc.) and API keys via `.env`.
+
+To run the web application locally:
+1. Ensure Python 3.13+ and pip are installed.
+2. Create and activate a virtual environment (e.g., `python3 -m venv venv`, `source venv/bin/activate`).
+3. Install dependencies: `pip install -r requirements.txt`.
+4. Create a `.env` file with your `COHERE_API_KEY` and `DEEPSEEK_API_KEY`.
+5. Ensure embedding files (`*_embeded.json`) are present in the `embedded_books/` directory.
+6. Run the Flask app: `python app.py`.
+7. Access the application at `http://localhost:5000`.
+
+For production deployment:
+1. The application can be deployed on any WSGI-compatible server (e.g., Gunicorn).
+2. Recommended hosting options: Heroku, DigitalOcean App Platform, AWS, Google Cloud.
+3. Environment variables must be configured for production.
+4. Use a production-grade WSGI server.
+5. Set up proper logging and monitoring.
+6. Configure HTTPS.
+
+Future Expansion:
+- Implement backend logic to handle and store user feedback.
+- Improve error handling and user messaging.
+- Make input file handling more dynamic in `manual_chunker.py` and `embed_chunks.py`.
+- Potentially add user authentication and book management features.
+

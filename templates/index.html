@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Codex Search - Find Passages in Your Favorite Books</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #2d3748; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #718096; }
+        /* Placeholder text style */
+        ::placeholder { color: #a0aec0; opacity: 1; }
+        /* Title pulse animation */
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .8; } }
+        .title-pulse { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        /* Styling for active toggle button */
+        .book-toggle-active { background-color: #6b46c1; border-color: #5b21b6; color: #ffffff; }
+        /* Styling for inactive toggle button */
+        .book-toggle-inactive { background-color: #4a5568; border-color: #2d3748; color: #e2e8f0; }
+        .book-toggle-inactive:hover { background-color: #718096; }
+        /* Feedback text area styling */
+        .feedback-textarea {
+            background-color: #2d3748; /* gray-800 */
+            border: 1px solid #4a5568; /* gray-600 */
+            color: #e2e8f0; /* gray-200 */
+        }
+        .feedback-textarea:focus {
+            outline: none;
+            border-color: #6b46c1; /* purple-700 */
+            box-shadow: 0 0 0 2px rgba(107, 70, 193, 0.5); /* Ring effect */
+        }
+        /* Disabled send button style */
+        .send-feedback-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        /* Added styles for search button */
+        .search-button {
+            background-color: #6b46c1; /* purple-700 */
+            color: white;
+            padding: 0.75rem 1.5rem; /* Adjust padding as needed */
+            border: none;
+            border-radius: 9999px; /* full */
+            font-weight: 500; /* medium */
+            transition: background-color 0.15s ease-in-out;
+            cursor: pointer;
+        }
+        .search-button:hover {
+            background-color: #5b21b6; /* purple-800 */
+        }
+        .search-button:focus {
+             outline: none;
+             box-shadow: 0 0 0 3px rgba(107, 70, 193, 0.4); /* Ring focus */
+        }
+        .search-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background-color: #4a5568; /* gray-600 */
+        }
+        /* Simple spinner */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            display: inline-block;
+            border: 3px solid rgba(196, 181, 253, 0.3); /* purple-300 opacity 30% */
+            border-radius: 50%;
+            border-top-color: #a78bfa; /* purple-400 */
+            width: 1.25rem; /* size-5 */
+            height: 1.25rem; /* size-5 */
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem; /* mr-2 */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center px-4 py-8">
+
+    <header class="text-center mb-8">
+        <h1 class="text-4xl md:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 mb-2 title-pulse">
+            Codex Search
+        </h1>
+        <p class="text-lg text-gray-400">Uncover passages within your favorite fantasy & sci-fi worlds.</p>
+    </header>
+
+    <section class="w-full max-w-3xl mb-8">
+        <h3 class="text-lg font-semibold text-gray-400 mb-4 text-center">Select Book to Search:</h3>
+        <div id="book-toggle-container" class="flex flex-wrap justify-center gap-3">
+            <!-- Book buttons will be dynamically inserted here -->
+        </div>
+    </section>
+
+    <section class="w-full max-w-2xl mb-4">
+        <div class="flex items-center gap-3">
+            <div class="relative flex-grow">
+                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <svg class="h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <input
+                    type="search"
+                    id="searchInput"
+                    placeholder="Select a book above and start searching..."
+                    class="w-full pl-11 pr-4 py-3 bg-gray-800 border border-gray-700 text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition duration-300 ease-in-out"
+                />
+            </div>
+            <button id="searchButton" class="search-button flex-shrink-0">
+                Search
+            </button>
+        </div>
+    </section>
+
+    <section class="w-full max-w-2xl mb-8">
+         <p id="select-book-prompt" class="text-center text-yellow-400 text-sm italic">
+             Please select a book above to enable search.
+         </p>
+    </section>
+
+    <section class="w-full max-w-3xl">
+        <h2 class="text-2xl font-semibold text-gray-300 mb-6 text-center md:text-left">Result</h2>
+
+        <!-- Loading Indicator (hidden by default) -->
+        <div id="loading-indicator" class="hidden text-center text-purple-400 mb-4 flex items-center justify-center">
+             <div class="spinner"></div>
+             <span>Searching...</span>
+        </div>
+
+        <!-- Example Result Card (Template, hidden by default) -->
+        <div class="result-card bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-6 mb-6 transition duration-300 hover:shadow-purple-500/30 hidden">
+            <p class="result-text text-gray-300 leading-relaxed mb-4">
+                Placeholder text...
+            </p>
+            <div class="flex justify-between items-center mb-3">
+                <span class="result-info text-sm text-purple-400 font-medium">Book Name - Chunk Index</span>
+                <div class="flex space-x-3">
+                    <button title="Good result" class="feedback-button thumbs-up p-2 rounded-full text-gray-400 hover:bg-green-700 hover:text-white transition duration-150 ease-in-out">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                        </svg>
+                    </button>
+                    <button title="Bad result" class="feedback-button thumbs-down p-2 rounded-full text-gray-400 hover:bg-red-700 hover:text-white transition duration-150 ease-in-out">
+                       <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                         <path d="M18 9.5a1.5 1.5 0 11-3 0v-6a1.5 1.5 0 013 0v6zM14 9.667v-5.43a2 2 0 00-1.106-1.79l-.05-.025A4 4 0 0011.057 2H5.642a2 2 0 00-1.962 1.608l-1.2 6A2 2 0 004.44 12H8v4a2 2 0 002 2 1 1 0 001-1v-.667a4 4 0 01.8-2.4l1.2-2.4A4 4 0 0014 9.667z" />
+                       </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="feedback-input-area hidden mt-3">
+                <textarea
+                    rows="3"
+                    placeholder="What was wrong with this result?"
+                    class="feedback-textarea w-full p-2 rounded-md text-sm transition duration-150 ease-in-out mb-2"
+                ></textarea>
+                <button
+                    class="send-feedback-button w-full sm:w-auto bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled
+                >
+                    Send Feedback
+                </button>
+            </div>
+        </div>
+
+        <!-- Area where dynamic result will be loaded -->
+        <div id="results-container">
+            <!-- Placeholder/Loading state can go here -->
+             <p id="results-placeholder" class="text-center text-gray-500 italic hidden">Select a book and enter a query to see results.</p>
+        </div>
+
+    </section>
+
+    <footer class="mt-16 text-center text-gray-500 text-sm">
+        <p>&copy; 2025 Codex Search. All rights reserved.</p>
+        <p>Powered by Vector Search & LLMs</p>
+    </footer>
+
+    <script>
+        // --- Available Books (Dynamically Determined) ---
+        // In a real Flask app, this would be passed from the backend.
+        // For now, we simulate based on the files found.
+        const availableBooks = [
+            { filename: "promise_of_blood_embeded.json", title: "Promise of Blood" },
+            { filename: "the_crimson_campaign_embeded.json", title: "The Crimson Campaign" },
+            { filename: "the_autumn_republic_embeded.json", title: "The Autumn Republic" },
+            { filename: "sins_of_empire_embeded.json", title: "Sins of Empire" },
+            { filename: "wrath_of_empire_embeded.json", title: "Wrath of Empire" },
+            { filename: "blood_of_empire_embeded.json", title: "Blood of Empire" },
+        ];
+
+        // --- DOM Elements ---
+        const bookToggleContainer = document.getElementById('book-toggle-container');
+        const searchInput = document.getElementById('searchInput');
+        const searchButton = document.getElementById('searchButton');
+        const resultsContainer = document.getElementById('results-container');
+        const resultsPlaceholder = document.getElementById('results-placeholder');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const selectBookPrompt = document.getElementById('select-book-prompt');
+        const resultCardTemplate = document.querySelector('.result-card');
+        let selectedBookFilename = null;
+        let selectedBookTitle = null;
+
+        // --- Populate Book Toggles ---
+        availableBooks.forEach(book => {
+            const button = document.createElement('button');
+            button.className = 'book-toggle book-toggle-inactive px-4 py-2 rounded-full border-2 transition duration-150 ease-in-out text-sm font-medium';
+            button.dataset.bookFilename = book.filename;
+            button.dataset.bookTitle = book.title;
+            button.textContent = book.title;
+            bookToggleContainer.appendChild(button);
+        });
+
+        // --- Book Toggle Functionality ---
+        const bookToggles = document.querySelectorAll('.book-toggle');
+
+        bookToggles.forEach(button => {
+            button.addEventListener('click', () => {
+                const bookFilename = button.dataset.bookFilename;
+                const bookTitle = button.dataset.bookTitle;
+                const isCurrentlyActive = button.classList.contains('book-toggle-active');
+
+                // Deactivate all buttons first
+                bookToggles.forEach(btn => {
+                    btn.classList.remove('book-toggle-active');
+                    btn.classList.add('book-toggle-inactive');
+                });
+
+                if (!isCurrentlyActive) {
+                    button.classList.remove('book-toggle-inactive');
+                    button.classList.add('book-toggle-active');
+                    selectedBookFilename = bookFilename;
+                    selectedBookTitle = bookTitle;
+                    searchInput.placeholder = `Search in ${bookTitle}...`;
+                    searchInput.disabled = false;
+                    searchButton.disabled = false;
+                    if(selectBookPrompt) selectBookPrompt.classList.add('hidden');
+                } else {
+                    // If clicking the active button, deactivate it and reset placeholder
+                    selectedBookFilename = null;
+                    selectedBookTitle = null;
+                    searchInput.placeholder = 'Select a book above and start searching...';
+                    searchInput.disabled = true;
+                    searchButton.disabled = true;
+                    if(selectBookPrompt) selectBookPrompt.classList.remove('hidden');
+                }
+                console.log('Selected book file:', selectedBookFilename);
+                // Clear previous results when book selection changes
+                resultsContainer.innerHTML = '';
+                if (resultsPlaceholder) {
+                    resultsPlaceholder.textContent = 'Select a book and enter a query to see results.';
+                    resultsPlaceholder.classList.remove('hidden');
+                    resultsContainer.appendChild(resultsPlaceholder);
+                }
+            });
+        });
+
+        // Disable search initially and ensure prompt is visible
+        searchInput.disabled = true;
+        searchButton.disabled = true;
+        if(selectBookPrompt) selectBookPrompt.classList.remove('hidden');
+
+        // --- Function to Trigger Search --- (Refactored)
+        async function triggerSearch() {
+            if (!selectedBookFilename || searchInput.value.trim() === '') {
+                console.log('Search not triggered: Book not selected or query empty.');
+                return;
+            }
+
+            const query = searchInput.value.trim();
+            console.log(`Triggering search for: "${query}" in book: ${selectedBookFilename}`);
+
+            // Show loading indicator and disable inputs
+            resultsContainer.innerHTML = '';
+            if(loadingIndicator) loadingIndicator.classList.remove('hidden');
+            searchInput.disabled = true;
+            searchButton.disabled = true;
+            bookToggles.forEach(btn => btn.disabled = true);
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query, book_filename: selectedBookFilename })
+                });
+
+                const responseData = await response.json();
+
+                if (!response.ok) {
+                    const errorMsg = responseData.error || `HTTP error! status: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+
+                displayResults(responseData, selectedBookTitle || selectedBookFilename.replace('_embeded.json', ''));
+
+            } catch (error) {
+                console.error('Search failed:', error);
+                resultsContainer.innerHTML = '';
+                const errorMsgElement = document.createElement('p');
+                errorMsgElement.className = 'text-center text-red-400 italic';
+                errorMsgElement.textContent = `Search failed: ${error.message || 'Please try again.'}`;
+                resultsContainer.appendChild(errorMsgElement);
+            } finally {
+                if(loadingIndicator) loadingIndicator.classList.add('hidden');
+                searchInput.disabled = false;
+                searchButton.disabled = !selectedBookFilename;
+                 bookToggles.forEach(btn => btn.disabled = false);
+            }
+        }
+
+        // --- Event Listeners for Search ---
+        if (searchInput) {
+            searchInput.addEventListener('keypress', (event) => {
+                if (event.key === 'Enter') {
+                    triggerSearch();
+                }
+            });
+        }
+
+        if (searchButton) {
+            searchButton.addEventListener('click', () => {
+                triggerSearch();
+            });
+        }
+
+        // --- Function to Display Results ---
+        function displayResults(results, bookTitle) {
+            resultsContainer.innerHTML = '';
+
+            if (!results || results.length === 0) {
+                const noResultsMsg = document.createElement('p');
+                noResultsMsg.className = 'text-center text-gray-500 italic';
+                noResultsMsg.textContent = 'No results found.';
+                resultsContainer.appendChild(noResultsMsg);
+                return;
+            }
+
+            if (!resultCardTemplate) {
+                console.error('Result card template not found!');
+                resultsContainer.textContent = 'Error displaying results: Template missing.';
+                return;
+            }
+
+            results.forEach(result => {
+                const card = resultCardTemplate.cloneNode(true);
+                card.classList.remove('hidden');
+                card.dataset.feedbackInitialized = 'false';
+
+                const resultTextElement = card.querySelector('.result-text');
+                const resultInfoElement = card.querySelector('.result-info');
+
+                if (resultTextElement) {
+                    resultTextElement.textContent = result.text;
+                } else {
+                    console.warn('Could not find .result-text element in card template');
+                }
+
+                if (resultInfoElement) {
+                    const percent = result.percent_into_book ? `${result.percent_into_book}%` : 'N/A';
+                    const scoreDisplay = result.score !== undefined ? result.score.toFixed(3) : 'N/A';
+                    resultInfoElement.textContent = `${bookTitle} - Chunk ${result.chunk_index} (Score: ${scoreDisplay}, ${percent} into book)`;
+                } else {
+                    console.warn('Could not find .result-info element in card template');
+                }
+
+                resultsContainer.appendChild(card);
+            });
+
+            setupFeedbackHandlers(resultsContainer);
+        }
+
+        // --- Feedback Handling ---
+        function setupFeedbackHandlers(containerElement) {
+            const resultCards = containerElement.querySelectorAll('.result-card');
+            resultCards.forEach(card => {
+                const thumbsUpButton = card.querySelector('.thumbs-up');
+                const thumbsDownButton = card.querySelector('.thumbs-down');
+                const feedbackArea = card.querySelector('.feedback-input-area');
+                const feedbackTextarea = card.querySelector('.feedback-textarea');
+                const sendFeedbackButton = card.querySelector('.send-feedback-button');
+                const resultInfo = card.querySelector('.result-info')?.textContent || 'Unknown Result';
+
+                if (card.dataset.feedbackInitialized) return;
+                card.dataset.feedbackInitialized = 'true';
+
+                if (thumbsUpButton) {
+                    thumbsUpButton.addEventListener('click', () => {
+                        console.log(`Thumbs Up clicked for: "${resultInfo}"`);
+                        if (feedbackArea) feedbackArea.classList.add('hidden');
+                        if (feedbackTextarea) feedbackTextarea.value = '';
+                        if (sendFeedbackButton) sendFeedbackButton.disabled = true;
+                    });
+                }
+                 if (thumbsDownButton) {
+                    thumbsDownButton.addEventListener('click', () => {
+                        console.log(`Thumbs Down clicked for: "${resultInfo}"`);
+                        if (feedbackArea) feedbackArea.classList.remove('hidden');
+                        if (sendFeedbackButton) sendFeedbackButton.disabled = true;
+                    });
+                }
+                if (feedbackTextarea) {
+                    feedbackTextarea.addEventListener('input', () => {
+                        if (sendFeedbackButton) {
+                            sendFeedbackButton.disabled = feedbackTextarea.value.trim() === '';
+                        }
+                    });
+                }
+                if (sendFeedbackButton) {
+                    sendFeedbackButton.addEventListener('click', () => {
+                        const feedbackText = feedbackTextarea.value.trim();
+                        if (feedbackText) {
+                            console.log(`Sending feedback for "${resultInfo}": ${feedbackText}`);
+                            feedbackTextarea.value = '';
+                            sendFeedbackButton.disabled = true;
+                            feedbackArea.classList.add('hidden');
+                        }
+                    });
+                }
+            });
+        }
+
+        // Initial setup
+        setupFeedbackHandlers(document.body);
+
+    </script>
+</body>
+</html> 
