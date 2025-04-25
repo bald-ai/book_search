@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 import os
 import logging
 import json
+import datetime # Import datetime for timestamping
 
 # Import the search function from search_chunks.py
 from search_chunks import search_book_chunks
@@ -14,6 +15,7 @@ logging.basicConfig(level=logging.INFO)
 # Define the directory where embedding files are stored
 EMBEDDINGS_DIR = "embedded_books"
 FEEDBACK_FILE = 'feedback_data.json'
+ALL_QUERIES_FILE = 'all_queries.json' # Define the new log file name
 
 # Helper function to load feedback data
 def load_feedback():
@@ -33,6 +35,29 @@ def save_feedback(data):
             json.dump(data, f, indent=4)
     except IOError as e:
         logging.error(f"Error saving feedback file: {e}")
+
+# Helper function to load query log data
+def load_query_log():
+    if not os.path.exists(ALL_QUERIES_FILE):
+        return []
+    try:
+        with open(ALL_QUERIES_FILE, 'r') as f:
+            # Handle empty file case
+            content = f.read()
+            if not content:
+                return []
+            return json.loads(content)
+    except (json.JSONDecodeError, IOError) as e:
+        logging.error(f"Error loading query log file: {e}")
+        return [] # Return empty list on error
+
+# Helper function to save query log data
+def save_query_log(data):
+    try:
+        with open(ALL_QUERIES_FILE, 'w') as f:
+            json.dump(data, f, indent=4)
+    except IOError as e:
+        logging.error(f"Error saving query log file: {e}")
 
 @app.route('/')
 def index():
@@ -60,6 +85,21 @@ def search():
 
     if not query or not book_filename:
         return jsonify({"error": "Missing 'query' or 'book_filename' in request"}), 400
+
+    # --- Log the query ---
+    try:
+        all_queries = load_query_log()
+        log_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "book_filename": book_filename,
+            "query": query
+        }
+        all_queries.append(log_entry)
+        save_query_log(all_queries)
+        logging.info(f"Logged query for book: {book_filename}")
+    except Exception as e:
+        logging.error(f"Failed to log query: {e}", exc_info=True)
+    # --- End logging ---
 
     # Construct the full path to the embeddings file
     # Basic security check: ensure filename doesn't contain path traversal chars
