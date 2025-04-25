@@ -53,8 +53,13 @@ Steps:
     - Searches the entire response for the last occurrence of `Final Answer: chunk XX` (case-insensitive).
     - Handles explicit `Final Answer: chunk none`.
     - Extracts the integer chunk index.
-- Returns a list containing the data dictionary for the single chunk selected by the LLM.
-- Falls back to returning the top semantic result if LLM fails, returns 'None', or parsing issues occur.
+- Finds the data (including text *from the embedding file*) for the LLM-selected chunk index
+  within the top N semantic results initially retrieved.
+- Returns a list containing the data dictionary for the single chunk selected by the LLM (or the
+  top semantic result as fallback). This dictionary contains the `chunk_index` and text derived
+  from the `embedded_books/` JSON.
+- **Important**: The `app.py` backend uses this result's `chunk_index` to load the actual display
+  text from the corresponding file in `chunks_json/`.
 
 ---
 Web Application (`app.py` & `templates/index.html`):
@@ -68,12 +73,21 @@ Key features:
 - Book Selection Prompt: A message prompts the user to select a book if none is active.
 - Search Trigger: Search is initiated by pressing Enter in the input field or clicking the button.
 - Loading Indicator: A spinner and text appear while the backend processes the search.
-- Result Display: Shows the single text chunk returned by the backend. No keyword highlighting is applied.
+- Result Display & Navigation:
+    - Shows the single text chunk returned by the backend.
+    - The backend (`app.py` /search route) takes the `chunk_index` from `search_chunks`, reads
+      the text from the corresponding file in `chunks_json/`, and sends this text and the total
+      chunk count for the book to the frontend.
+    - "Previous Chunk" and "Next Chunk" buttons appear below the result text.
+    - Clicking these buttons calls a new backend endpoint (`/get_chunk_text`) to fetch and display
+      the text of the adjacent chunk without running a new search.
+    - Buttons are disabled at the start/end of the book.
 - Feedback:
-  - Thumbs up/down buttons are present on the result card.
-  - Clicking either button sends the `query`, `book_filename`, `chunk_index`, and correctness 
-    (true/false) to the backend `/feedback` endpoint.
-  - Buttons are visually updated and disabled after feedback is sent.
+    - Solid thumbs up/down buttons appear next to the main "Result" heading when a result is shown.
+    - Clicking either button sends the current `query`, `book_filename`, `chunk_index`, and
+      correctness (true/false) to the backend `/feedback` endpoint.
+    - The buttons become disabled, visually change color, and are replaced by a "Feedback Sent!"
+      message after a short delay.
 
 Backend (`app.py`):
 - Serves the main `index.html` page, passing the list of available books.
@@ -81,9 +95,19 @@ Backend (`app.py`):
     - Receives the `query` and selected `book_filename` as JSON.
     - Validates input and constructs the full path to the embedding file.
     - Calls the `search_book_chunks` function from `search_chunks.py`.
-    - Takes the single result (or empty list) returned by the search function.
-    - Returns the result data as JSON to the frontend.
+    - Takes the single result dictionary (containing `chunk_index`, text from embedding file, etc.)
+      returned by the search function.
+    - **Crucially**, uses the returned `chunk_index` to open the corresponding original chunk file
+      in `chunks_json/` and reads the `text` field from that file.
+    - Creates a new result dictionary containing this text from `chunks_json/` and other relevant
+      metadata (`chunk_index`, `score`, etc.).
+    - Returns this final result data as JSON to the frontend.
     - Includes basic logging and error handling.
+
+- Provides a `/get_chunk_text` endpoint (POST) that:
+    - Receives `book_filename` and `chunk_index`.
+    - Reads the specified chunk's text from the corresponding `chunks_json/` file.
+    - Returns the chunk data (text, index) as JSON.
 
 - Provides a `/feedback` endpoint (POST) that:
   - Receives `query`, `book_filename`, `chunk_index`, and `is_correct` as JSON.
@@ -107,17 +131,42 @@ Frontend (`index.html` JavaScript):
     - Clears previous results/loading indicator.
     - Handles 'No results found' or error messages.
     - Clones a hidden HTML template for the result card.
-    - Populates the card with the text, book title, chunk index, and score.
+    - Populates the card with the text, book title, and chunk index.
+    - Initializes state for navigation: remembers the original chunk index (`originalChunkIndex`)
+      and resets a cache for full chunk text (`chunkFullTextCache`). The original chunk's full
+      text is added to the cache.
+    - Shows the global feedback buttons next to the "Result" heading.
     - Appends the card to the results area.
-    - Calls `setupFeedbackHandlers` to enable feedback buttons on the new card.
-- Contains `setupFeedbackHandlers` function that adds event listeners to the like/dislike buttons on each
-  result card.
-  - When a button is clicked, it gathers the necessary data (query, index, etc.).
-  - It calls the `sendFeedback` function.
+    - Sets up event listeners for the "Previous Chunk" and "Next Chunk" buttons, enabling/
+      disabling them based on the current index and total chunk count.
+
+- Contains `getFullChunkText` helper async function:
+    - Checks if the requested chunk index's full text is already in `chunkFullTextCache`.
+    - If cached, returns the cached text.
+    - If not cached, calls the `/get_chunk_text` endpoint to fetch the full text.
+    - Stores the fetched full text in the cache before returning it.
+
+- Contains `fetchChunkText` async function:
+    - Called by navigation buttons ('previous' or 'next').
+    - Uses `getFullChunkText` to retrieve the full text of the target chunk.
+    - Implements specific overlap trimming logic:
+        - If the target chunk *is* the `originalChunkIndex`, its full text is always displayed.
+        - If navigating 'next' (from N to N+1), uses `getFullChunkText` to get chunk N's text
+          and displays chunk N+1 after removing overlap: `removeOverlap(textN, textN+1)`.
+        - If navigating 'previous' (from N to N-1), uses `getFullChunkText` to get chunk N-2's
+          text and displays chunk N-1 after removing overlap: `removeOverlap(textN-2, textN-1)`.
+    - Updates the result card content with the (potentially trimmed) text and target index.
+    - Updates the `currentChunkIndex` and stores the *full* target text in `currentFullChunkText`.
+    - Updates the navigation button states.
+
+- Contains global feedback button listeners (setup on page load):
+    - Added to the thumbs up/down buttons next to the "Result" heading.
+    - When clicked, call the `sendFeedback` function.
+
 - Contains `sendFeedback` async function:
-  - Takes feedback data as arguments.
+  - Reads current `query`, `chunk_index`, and `book_filename` from the page state.
   - Sends a POST request with the data to the `/feedback` endpoint.
-  - Handles the response and potential errors, updating the UI accordingly (disabling buttons).
+  - Handles the response and potential errors, updating the UI (disabling buttons, showing message).
 
 Dependencies are managed through `requirements.txt` (including `flask`, `cohere`, `openai`, `numpy`,
 `python-dotenv`, etc.) and API keys via `.env`.

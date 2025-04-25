@@ -24,6 +24,10 @@ load_dotenv()
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY") # Re-enabled
 
+# --- Debug Print ---
+# print(f"DEBUG: Loaded COHERE_API_KEY starting with: {str(COHERE_API_KEY)[:8]}...") # Print first 8 chars
+# --- End Debug Print ---
+
 if not COHERE_API_KEY:
     raise ValueError("COHERE_API_KEY not found in .env file.")
 if not DEEPSEEK_API_KEY:
