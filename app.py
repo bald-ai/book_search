@@ -87,16 +87,19 @@ def search():
         return jsonify({"error": "Missing 'query' or 'book_filename' in request"}), 400
 
     # --- Log the query ---
+    # Prepare for multi-book logging, even if only one is sent currently
+    selected_books_list = [book_filename] # Create a list from the single filename
+
     try:
         all_queries = load_query_log()
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "book_filename": book_filename,
+            "selected_books": selected_books_list, # Log as a list
             "query": query
         }
         all_queries.append(log_entry)
         save_query_log(all_queries)
-        logging.info(f"Logged query for book: {book_filename}")
+        logging.info(f"Logged query for books: {selected_books_list}") # Log the list
     except Exception as e:
         logging.error(f"Failed to log query: {e}", exc_info=True)
     # --- End logging ---
@@ -155,9 +158,10 @@ def search():
                         "text": chunk_text,
                         "chunk_index": chunk_index,
                         "score": top_result.get("score", 0.0),
+                        "rank": top_result.get("rank")
                     }
                 )
-                logging.info(f"Returning top result (Chunk {chunk_index}/{total_chunks}) for query: '{query}' in '{book_filename}'")
+                logging.info(f"Returning top result (Chunk {chunk_index}/{total_chunks}, Rank: {top_result.get('rank')}) for query: '{query}' in '{book_filename}'")
             else:
                  logging.warning(f"Could not find text for chunk index {chunk_index} in {original_path}, although search returned it.")
                  # Still return search_completed and total_chunks if applicable, but results might be empty
@@ -197,17 +201,29 @@ def handle_feedback():
     query = data.get('query')
     chunk_index = data.get('chunk_index')
     is_correct = data.get('is_correct')
-    book_filename = data.get('book_filename')
+    # Expect a list of book filenames now
+    selected_books = data.get('selected_books') # Changed from book_filename
+    rank = data.get('rank')
 
-    if query is None or chunk_index is None or is_correct is None or book_filename is None:
-        logging.warning(f"Received incomplete feedback data: {data}")
-        return jsonify({"error": "Missing required feedback fields (query, chunk_index, is_correct, book_filename)"}), 400
+    # Validate the new structure
+    if query is None or chunk_index is None or is_correct is None or selected_books is None or not (
+        rank is None or (isinstance(rank, int) and rank >= 0)
+    ):
+        logging.warning(f"Received incomplete or invalid feedback data: {data}")
+        # Updated error message
+        return jsonify({"error": "Missing or invalid required feedback fields (query, chunk_index, is_correct, selected_books, rank[must be null or >= 0])"}), 400
+
+    # Ensure selected_books is a list
+    if not isinstance(selected_books, list) or not all(isinstance(item, str) for item in selected_books):
+         logging.warning(f"Invalid format for selected_books: {selected_books}")
+         return jsonify({"error": "'selected_books' must be a list of strings"}), 400
 
     feedback_entry = {
         "query": query,
-        "book_filename": book_filename,
+        "selected_books": selected_books, # Store the list
         "chunk_index": chunk_index,
-        "is_correct": is_correct
+        "is_correct": is_correct,
+        "rank": rank
         # Optional: Add timestamp
         # "timestamp": datetime.datetime.now().isoformat()
     }

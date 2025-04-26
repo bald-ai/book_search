@@ -53,11 +53,12 @@ Steps:
     - Searches the entire response for the last occurrence of `Final Answer: chunk XX` (case-insensitive).
     - Handles explicit `Final Answer: chunk none`.
     - Extracts the integer chunk index.
-- Finds the data (including text *from the embedding file*) for the LLM-selected chunk index
-  within the top N semantic results initially retrieved.
+- Finds the data for the LLM-selected chunk index within the top N semantic results initially retrieved.
+- Determines the 0-based `rank` of this selected chunk within the top N list (e.g., rank 0 is the
+  best semantic match).
 - Returns a list containing the data dictionary for the single chunk selected by the LLM (or the
-  top semantic result as fallback). This dictionary contains the `chunk_index` and text derived
-  from the `embedded_books/` JSON.
+  top semantic result as fallback). This dictionary contains the `chunk_index`, text (from the
+  embedding file), score, and the calculated `rank`.
 - **Important**: The `app.py` backend uses this result's `chunk_index` to load the actual display
   text from the corresponding file in `chunks_json/`.
 
@@ -92,15 +93,18 @@ Key features:
 Backend (`app.py`):
 - Serves the main `index.html` page, passing the list of available books.
 - Provides a `/search` endpoint (POST) that:
-    - Receives the `query` and selected `book_filename` as JSON.
-    - Validates input and constructs the full path to the embedding file.
+    - Receives the `query` and selected `book_filename` (currently one, potentially multiple later).
+    - **Logs the search**: Appends an entry to `all_queries.json` containing the `timestamp`, the
+      list of `selected_books` (filenames), and the raw `query`. This supports future analysis and
+      potential multi-book searches.
+    - Validates input and constructs the full path to the embedding file(s).
     - Calls the `search_book_chunks` function from `search_chunks.py`.
-    - Takes the single result dictionary (containing `chunk_index`, text from embedding file, etc.)
-      returned by the search function.
+    - Takes the single result dictionary (containing `chunk_index`, `rank`, text from embedding file,
+      etc.) returned by the search function.
     - **Crucially**, uses the returned `chunk_index` to open the corresponding original chunk file
       in `chunks_json/` and reads the `text` field from that file.
     - Creates a new result dictionary containing this text from `chunks_json/` and other relevant
-      metadata (`chunk_index`, `score`, etc.).
+      metadata (`chunk_index`, `score`, `rank`, etc.).
     - Returns this final result data as JSON to the frontend.
     - Includes basic logging and error handling.
 
@@ -110,10 +114,12 @@ Backend (`app.py`):
     - Returns the chunk data (text, index) as JSON.
 
 - Provides a `/feedback` endpoint (POST) that:
-  - Receives `query`, `book_filename`, `chunk_index`, and `is_correct` as JSON.
-  - Validates the input data.
+  - Receives `query`, `selected_books` (list), `chunk_index`, `is_correct`, and `rank` as JSON.
+  - The `rank` represents the 0-based position of the displayed chunk within the initial top N
+    semantic search results before LLM refinement.
+  - Validates the input data, including checking that `rank` is null or a non-negative integer.
   - Loads existing feedback data from `feedback_data.json`.
-  - Appends the new feedback entry to the list.
+  - Appends the new feedback entry (including the `rank`) to the list.
   - Saves the updated list back to `feedback_data.json`.
   - Returns a success message.
 
@@ -133,8 +139,8 @@ Frontend (`index.html` JavaScript):
     - Clones a hidden HTML template for the result card.
     - Populates the card with the text, book title, and chunk index.
     - Initializes state for navigation: remembers the original chunk index (`originalChunkIndex`)
-      and resets a cache for full chunk text (`chunkFullTextCache`). The original chunk's full
-      text is added to the cache.
+      and resets a cache for full chunk text (`chunkFullTextCache`). Stores the initial `rank`
+      received from the backend in `currentRank`. The original chunk's full text is added to the cache.
     - Shows the global feedback buttons next to the "Result" heading.
     - Appends the card to the results area.
     - Sets up event listeners for the "Previous Chunk" and "Next Chunk" buttons, enabling/
@@ -164,8 +170,8 @@ Frontend (`index.html` JavaScript):
     - When clicked, call the `sendFeedback` function.
 
 - Contains `sendFeedback` async function:
-  - Reads current `query`, `chunk_index`, and `book_filename` from the page state.
-  - Sends a POST request with the data to the `/feedback` endpoint.
+  - Reads current `query`, `chunk_index`, `book_filename`, and `rank` from the page state.
+  - Sends a POST request with this data (including `rank`) to the `/feedback` endpoint.
   - Handles the response and potential errors, updating the UI (disabling buttons, showing message).
 
 Dependencies are managed through `requirements.txt` (including `flask`, `cohere`, `openai`, `numpy`,
@@ -190,8 +196,10 @@ For production deployment:
 
 Future Expansion:
 - Implement backend logic to handle and store user feedback.
-- Analyze and utilize the collected feedback data (from `feedback_data.json`).
+- Analyze and utilize the collected feedback data (from `feedback_data.json`) and query data
+  (from `all_queries.json`). This includes using the `rank` data to evaluate semantic search performance.
 - Improve error handling and user messaging.
 - Make input file handling more dynamic in `manual_chunker.py` and `embed_chunks.py`.
+- Implement multi-book search functionality (backend already logs selected books as a list).
 - Potentially add user authentication and book management features.
 

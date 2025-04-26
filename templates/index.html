@@ -108,11 +108,17 @@
                     </svg>
                 </div>
                 <input
-                    type="search"
+                    type="text"
                     id="searchInput"
                     placeholder="Select a book above and start searching..."
-                    class="w-full pl-11 pr-4 py-3 bg-gray-800 border border-gray-700 text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition duration-300 ease-in-out"
+                    class="w-full pl-11 pr-10 py-3 bg-gray-800 border border-gray-700 text-gray-100 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition duration-300 ease-in-out"
                 />
+                <!-- Custom Clear Button -->
+                <button id="clearSearchButton" class="absolute inset-y-0 right-0 flex items-center pr-3 text-[#ac36c9] hover:text-[#e61947] focus:outline-none" style="display: none;"> <!-- Hidden initially, Changed text color and hover color -->
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
             </div>
             <button id="searchButton" class="search-button flex-shrink-0">
                 Search
@@ -251,6 +257,8 @@
         const resultsContainer = document.getElementById('results-container');
         const loadingIndicator = document.getElementById('loading-indicator');
         const selectBookPrompt = document.getElementById('select-book-prompt');
+        // --- NEW: Custom Clear Button Element ---
+        const clearSearchButton = document.getElementById('clearSearchButton');
         // --- State for Navigation ---
         let currentChunkIndex = null;
         let totalChunks = 0;
@@ -265,6 +273,7 @@
         // --- Navigation / trimming state (NEW) ---
         let originalChunkIndex   = null;     // remember first result (x)
         let chunkFullTextCache   = {};       // {index: fullChunkText}
+        let currentRank          = null;     // <<< Add state for rank
 
         // --- Populate Book Toggles ---
         availableBooks.forEach(book => {
@@ -317,8 +326,26 @@
                 if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; // Hide feedback buttons
                 if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
                 resetGlobalFeedbackButtons(); // Reset their state
+                currentRank = null; // <<< Reset rank on book change
             });
         });
+
+        // --- NEW: Clear Button Logic ---
+        if (searchInput && clearSearchButton) {
+            searchInput.addEventListener('input', () => {
+                // Show button only if there is text
+                clearSearchButton.style.display = searchInput.value.length > 0 ? 'flex' : 'none';
+            });
+
+            clearSearchButton.addEventListener('click', () => {
+                searchInput.value = ''; // Clear the input
+                clearSearchButton.style.display = 'none'; // Hide the button
+                searchInput.focus(); // Optionally focus back on the input
+                // If clearing the input should also clear results, add that logic here
+                // resultsContainer.innerHTML = '';
+                // Reset other state if needed
+            });
+        }
 
         // Disable search initially and ensure prompt is visible
         searchInput.disabled = true;
@@ -383,6 +410,7 @@
                 if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; // Hide feedback buttons on error
                 if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
                 resultsContainer.appendChild(errorMsgElement);
+                currentRank = null; // <<< Reset rank on error
             } finally {
                 if(loadingIndicator) loadingIndicator.classList.add('hidden');
                 searchInput.disabled = false;
@@ -511,6 +539,7 @@
 
             if (!results || results.length === 0) {
                 resultsContainer.innerHTML = '<p class="text-gray-500">No results found.</p>';
+                currentRank = null; // <<< Reset rank if no results
                 return;
             }
 
@@ -521,6 +550,7 @@
             currentChunkIndex         = result.chunk_index;
             totalChunks               = totalChunkCount;
             currentFullChunkText      = result.text;
+            currentRank               = result.rank; // <<< Store the rank
 
             chunkFullTextCache        = {};              // reset cache for a new search
             chunkFullTextCache[originalChunkIndex] = result.text;
@@ -540,7 +570,6 @@
 
             // Show global feedback buttons now that a result is displayed
             if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex';
-            console.log("Result displayed. Global feedback buttons shown.");
         }
 
         // --- Function to Set Up Navigation Buttons --- (Modified to pass direction)
@@ -587,17 +616,14 @@
         }
 
         // --- Global Feedback Button Logic ---
-        const thumbsUpButton = document.querySelector('.thumbs-up');
-        const thumbsDownButton = document.querySelector('.thumbs-down');
-
-        if (thumbsUpButton) {
-            thumbsUpButton.addEventListener('click', () => {
+        if (globalLikeButton) {
+            globalLikeButton.addEventListener('click', () => {
                 sendFeedback(true);
             });
         }
 
-        if (thumbsDownButton) {
-            thumbsDownButton.addEventListener('click', () => {
+        if (globalDislikeButton) {
+            globalDislikeButton.addEventListener('click', () => {
                 sendFeedback(false);
             });
         }
@@ -608,6 +634,7 @@
              const query = searchInput.value;
              const chunkIndex = currentChunkIndex;
              const bookFilename = selectedBookFilename;
+             const rank = currentRank; // <<< Get rank from global state
 
              if (query === null || chunkIndex === null || bookFilename === null) {
                  console.error('Cannot send feedback: Missing query, chunkIndex, or bookFilename in current state.');
@@ -615,7 +642,10 @@
                  return;
              }
 
-             console.log('Calling sendFeedback with:', { query, chunkIndex, isCorrect, bookFilename });
+             // Create a list for selected_books
+             const selectedBooksList = [bookFilename];
+
+             console.log('Calling sendFeedback with:', { query, chunkIndex, isCorrect, selectedBooks: selectedBooksList, rank });
 
              // Disable buttons immediately
              if (globalLikeButton) {
@@ -640,7 +670,8 @@
                          query: query,
                          chunk_index: chunkIndex,
                          is_correct: isCorrect,
-                         book_filename: bookFilename
+                         selected_books: selectedBooksList,
+                         rank: rank
                      }),
                  });
 
@@ -676,6 +707,8 @@
 
         // --- Initialize Global Event Listeners --- (New)
         document.addEventListener('DOMContentLoaded', () => {
+            // Remove redundant listeners from here
+            /*
             if (globalLikeButton) {
                 globalLikeButton.addEventListener('click', () => {
                     sendFeedback(true);
@@ -686,9 +719,11 @@
                     sendFeedback(false);
                 });
             }
+            */
             // Initial state: hide feedback buttons
              if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none';
              if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
+             currentRank = null; // <<< Initialize rank state
         });
 
     </script>

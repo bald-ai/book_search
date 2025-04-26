@@ -1,38 +1,46 @@
 [
     {
         "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
-        "book_filename": "promise_of_blood_embeded.json",
+        "selected_books": [
+            "promise_of_blood_embeded.json"
+        ],
         "chunk_index": 12,
         "is_correct": true
     },
     {
         "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
-        "book_filename": "promise_of_blood_embeded.json",
+        "selected_books": [
+            "promise_of_blood_embeded.json"
+        ],
         "chunk_index": 12,
-        "is_correct": false
+        "is_correct": true,
+        "rank": null
     },
     {
         "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
-        "book_filename": "promise_of_blood_embeded.json",
+        "selected_books": [
+            "promise_of_blood_embeded.json"
+        ],
         "chunk_index": 12,
-        "is_correct": false
+        "is_correct": false,
+        "rank": null
     },
     {
         "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
-        "book_filename": "promise_of_blood_embeded.json",
+        "selected_books": [
+            "promise_of_blood_embeded.json"
+        ],
         "chunk_index": 12,
-        "is_correct": false
+        "is_correct": true,
+        "rank": null
     },
     {
         "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
-        "book_filename": "promise_of_blood_embeded.json",
+        "selected_books": [
+            "promise_of_blood_embeded.json"
+        ],
         "chunk_index": 12,
-        "is_correct": true
-    },
-    {
-        "query": "Describe the scene where Field Marshal Tamas confronts the King of Adro during the coup.",
-        "book_filename": "promise_of_blood_embeded.json",
-        "chunk_index": 12,
-        "is_correct": true
+        "is_correct": false,
+        "rank": 9
     }
 ]

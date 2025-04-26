@@ -62,7 +62,8 @@ def search_book_chunks(query: str, embeddings_file_path: str, top_n: int = TOP_N
 
     Returns:
         A list containing a single dictionary for the LLM-selected chunk,
-        or an empty list if no relevant chunk is found or an error occurs.
+        which includes the chunk_index, text (from embedding file), score, and original semantic rank (0-based).
+        Returns an empty list if no relevant chunk is found or an error occurs.
     """
     # --- Load Embedded Data ---
     try:
@@ -130,13 +131,15 @@ def search_book_chunks(query: str, embeddings_file_path: str, top_n: int = TOP_N
              chunk_index = embedded_data[original_index].get('chunk_index', original_index)
              text = embedded_data[original_index].get('text', '')
              score = float(scores[original_index])
-             logging.info(f"  {i+1}. Chunk {chunk_index}, Score: {score:.4f}")
+             rank = i # Store the 0-based rank
+             logging.info(f"  {i+1}. Rank {rank}, Chunk {chunk_index}, Score: {score:.4f}")
              top_chunks_for_llm += f"-- Chunk {chunk_index} --\n{text}\n\n"
              # Store the data needed if we fall back or need to retrieve the LLM choice
              semantic_results_data.append({
                  "chunk_index": chunk_index,
                  "text": text,
                  "score": score,
+                 "rank": rank,
                  "percent_into_book": embedded_data[original_index].get('percent_into_book'),
                  "audio_timestamp": embedded_data[original_index].get('audio_timestamp'),
              })
@@ -217,22 +220,50 @@ def search_book_chunks(query: str, embeddings_file_path: str, top_n: int = TOP_N
             # final_chunk_index remains None
 
         # --- Prepare final result (fallback logic remains the same) ---
+        selected_rank = None # Initialize rank variable
         if final_chunk_index is not None:
             chosen_chunk_data = next((res for res in semantic_results_data if res['chunk_index'] == final_chunk_index), None)
             if chosen_chunk_data:
-                 logging.info(f"LLM chose Chunk Index: {final_chunk_index}. Returning this chunk.")
+                 selected_rank = chosen_chunk_data.get('rank') # Get rank from chosen data
+                 logging.info(f"LLM chose Chunk Index: {final_chunk_index} (Rank: {selected_rank}). Returning this chunk.")
+                 # Ensure the rank is *always* included in the returned dictionary
+                 chosen_chunk_data['rank'] = selected_rank # <<< Always assign the rank
                  return [chosen_chunk_data]
             else:
                  logging.warning(f"LLM chose Chunk Index {final_chunk_index}, but it wasn't in the top {actual_top_n} semantic results!? Falling back to top semantic.")
-                 return [semantic_results_data[0]] if semantic_results_data else [] # Ensure fallback isn't empty
+                 fallback_data = semantic_results_data[0] if semantic_results_data else None
+                 if fallback_data:
+                     selected_rank = fallback_data.get('rank') # Get rank from fallback data
+                     # Ensure the rank is included in the fallback dictionary
+                     fallback_data['rank'] = selected_rank # <<< Always assign the rank
+                     logging.info(f"Falling back to Rank {selected_rank}, Chunk {fallback_data.get('chunk_index')}")
+                     return [fallback_data]
+                 else:
+                     return [] # Should not happen if semantic_results_data was not empty before
         else:
             logging.info("LLM did not select a specific chunk or parsing failed. Falling back to top semantic result.")
-            return [semantic_results_data[0]] if semantic_results_data else [] # Ensure fallback isn't empty
+            fallback_data = semantic_results_data[0] if semantic_results_data else None
+            if fallback_data:
+                selected_rank = fallback_data.get('rank') # Get rank from fallback data
+                # Ensure the rank is included in the fallback dictionary
+                fallback_data['rank'] = selected_rank # <<< Always assign the rank
+                logging.info(f"Falling back to Rank {selected_rank}, Chunk {fallback_data.get('chunk_index')}")
+                return [fallback_data]
+            else:
+                return [] # Ensure fallback isn't empty
 
     except Exception as e:
         logging.error(f"Error calling LLM API or processing response: {e}", exc_info=True)
         logging.info("Falling back to top semantic match due to LLM error.")
-        return [semantic_results_data[0]] if semantic_results_data else []
+        fallback_data = semantic_results_data[0] if semantic_results_data else None
+        if fallback_data:
+            selected_rank = fallback_data.get('rank') # Get rank from fallback data
+            # Ensure the rank is included in the fallback dictionary
+            fallback_data['rank'] = selected_rank # <<< Always assign the rank
+            logging.info(f"Falling back to Rank {selected_rank}, Chunk {fallback_data.get('chunk_index')}")
+            return [fallback_data]
+        else:
+            return [] # Ensure fallback isn't empty
 
 # --- Remove Standalone Execution --- 
 # (Commented out the old processing loop and final output)
