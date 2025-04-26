@@ -1,4 +1,4 @@
 venv/
 .env
 all_queries.json
-working_memory_search_chunks.md
+working_memory.md
