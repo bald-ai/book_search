@@ -74,27 +74,33 @@ def index():
     return render_template('index.html', available_books=available_books)
 
 @app.route('/search', methods=['POST'])
-def search():
+async def search():
     """Handles search requests from the frontend."""
     if not request.is_json:
         return jsonify({"error": "Request must be JSON"}), 400
 
     data = request.get_json()
     query = data.get('query')
-    book_filename = data.get('book_filename')
+    # Expecting a list of filenames now
+    book_filenames = data.get('book_filenames') 
 
-    if not query or not book_filename:
-        return jsonify({"error": "Missing 'query' or 'book_filename' in request"}), 400
+    # Validate input
+    if not query or not book_filenames:
+        return jsonify({"error": "Missing 'query' or 'book_filenames' in request"}), 400
+    if not isinstance(book_filenames, list) or not book_filenames:
+         return jsonify({"error": "'book_filenames' must be a non-empty list"}), 400
+    if not all(isinstance(fn, str) for fn in book_filenames):
+         return jsonify({"error": "'book_filenames' must contain only strings"}), 400
 
     # --- Log the query ---
-    # Prepare for multi-book logging, even if only one is sent currently
-    selected_books_list = [book_filename] # Create a list from the single filename
+    # Directly use the received list
+    selected_books_list = book_filenames 
 
     try:
         all_queries = load_query_log()
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "selected_books": selected_books_list, # Log as a list
+            "selected_books": selected_books_list, # Log the list
             "query": query
         }
         all_queries.append(log_entry)
@@ -104,92 +110,116 @@ def search():
         logging.error(f"Failed to log query: {e}", exc_info=True)
     # --- End logging ---
 
-    # Construct the full path to the embeddings file
-    # Basic security check: ensure filename doesn't contain path traversal chars
-    if '..' in book_filename or '/' in book_filename:
-         logging.warning(f"Attempted path traversal with filename: {book_filename}")
-         return jsonify({"error": "Invalid book filename"}), 400
+    # Construct the full paths to the embeddings files and validate them
+    embeddings_file_paths = []
+    valid_filenames_for_chunk_lookup = {} # Store mapping for later chunk text lookup
 
-    embeddings_file_path = os.path.join(EMBEDDINGS_DIR, book_filename)
+    for filename in book_filenames:
+        # Basic security check
+        if '..' in filename or '/' in filename:
+             logging.warning(f"Attempted path traversal with filename: {filename}")
+             return jsonify({"error": f"Invalid book filename format: {filename}"}), 400
+        
+        if not filename.endswith('_embeded.json'):
+            logging.warning(f"Invalid filename extension: {filename}")
+            return jsonify({"error": f"Invalid book filename extension: {filename}"}), 400
 
-    # Check if the file actually exists
-    if not os.path.isfile(embeddings_file_path):
-        logging.error(f"Embeddings file not found: {embeddings_file_path}")
-        return jsonify({"error": "Selected book data not found on server."}), 404
+        full_path = os.path.join(EMBEDDINGS_DIR, filename)
+        
+        # Check if the file actually exists
+        if not os.path.isfile(full_path):
+            logging.error(f"Required embeddings file not found: {full_path}")
+            return jsonify({"error": f"Selected book data not found on server: {filename}"}), 404
+        
+        embeddings_file_paths.append(full_path)
+        # Store a mapping from the base name (assumed to match book_name) to the original filename
+        # Example: "promise_of_blood_embeded.json" -> "promise_of_blood"
+        base_name = filename.replace('_embeded.json', '')
+        valid_filenames_for_chunk_lookup[base_name] = filename
 
-    logging.info(f"Searching in '{embeddings_file_path}' for query: '{query}'")
+    logging.info(f"Searching in {len(embeddings_file_paths)} files for query: '{query}'")
 
-    # Signal search start (for backend logs, frontend will log on receiving response)
-    logging.info(f"Initiating search_book_chunks for query: '{query}'")
+    # Signal search start
+    logging.info(f"Initiating search_book_chunks for query: '{query}' across {len(embeddings_file_paths)} books")
 
     try:
-        results = search_book_chunks(query, embeddings_file_path)
+        # Pass the list of paths to the search function and await it
+        results = await search_book_chunks(query, embeddings_file_paths)
         logging.info(f"search_book_chunks completed. Found {len(results)} potential results.")
 
-        # Select only the top result if results are found
         top_result = results[0] if results else None
 
-        # Format results slightly for frontend if needed, or return directly
         formatted_results = []
-        search_completed_flag = True # Flag indicating the search function ran fully
-        total_chunks = 0 # Initialize total_chunks
+        search_completed_flag = True 
+        total_chunks = 0 # Initialize total_chunks for the *specific book* the result came from
         chunk_text = None
-        if top_result:
-            # Always get the chunk text from chunks_json
-            original_json = book_filename.replace('_embeded.json', '.json')
-            original_path = os.path.join('chunks_json', original_json)
-            chunk_index = top_result.get('chunk_index', -1)
-            if os.path.isfile(original_path) and chunk_index != -1:
-                try:
-                    with open(original_path, 'r', encoding='utf-8') as f:
-                        original_chunks_data = json.load(f) # Load the whole file
-                    total_chunks = len(original_chunks_data) # Get total chunk count
-                    # Find the specific chunk's text
-                    for chunk in original_chunks_data:
-                        if chunk.get('chunk_index') == chunk_index:
-                            chunk_text = chunk.get('text', None)
-                            break
-                except Exception as e:
-                    logging.error(f"Error loading chunk text or counting chunks from {original_path}: {e}")
+        result_book_name = None # Initialize book name for the result
 
-            if chunk_text is not None: # Check if chunk_text was found
+        if top_result:
+            chunk_index = top_result.get('chunk_index', -1)
+            result_book_name = top_result.get('book_name') # Get book name from the result
+            result_rank = top_result.get('rank')
+            result_score = top_result.get('score', 0.0)
+
+            if result_book_name and chunk_index != -1:
+                # Use the book_name to find the original filename for chunk lookup
+                # Assuming book_name like "Promise Of Blood" maps to base "promise_of_blood"
+                lookup_base_name = result_book_name.lower().replace(' ', '_')
+                original_filename_embed = valid_filenames_for_chunk_lookup.get(lookup_base_name)
+
+                if original_filename_embed:
+                    original_json_filename = original_filename_embed.replace('_embeded.json', '.json')
+                    original_path = os.path.join('chunks_json', original_json_filename)
+                    
+                    if os.path.isfile(original_path):
+                        try:
+                            with open(original_path, 'r', encoding='utf-8') as f:
+                                original_chunks_data = json.load(f)
+                            total_chunks = len(original_chunks_data) # Get total chunk count for THIS book
+                            # Find the specific chunk's text
+                            for chunk in original_chunks_data:
+                                if chunk.get('chunk_index') == chunk_index:
+                                    chunk_text = chunk.get('text', None)
+                                    break
+                        except Exception as e:
+                            logging.error(f"Error loading chunk text or counting chunks from {original_path}: {e}")
+                    else:
+                         logging.warning(f"Original chunk file not found: {original_path} derived from book_name '{result_book_name}'")
+                else:
+                    logging.warning(f"Could not map returned book_name '{result_book_name}' (lookup key: '{lookup_base_name}') back to a valid input filename.")
+
+            if chunk_text is not None:
                 formatted_results.append(
                     {
                         "text": chunk_text,
                         "chunk_index": chunk_index,
-                        "score": top_result.get("score", 0.0),
-                        "rank": top_result.get("rank")
+                        "score": result_score,
+                        "rank": result_rank,
+                        "book_name": result_book_name, # Include book name for frontend
+                        "total_chunks": total_chunks # Include total chunks for THIS book
                     }
                 )
-                logging.info(f"Returning top result (Chunk {chunk_index}/{total_chunks}, Rank: {top_result.get('rank')}) for query: '{query}' in '{book_filename}'")
+                logging.info(f"Returning top result (Book: '{result_book_name}', Chunk {chunk_index}/{total_chunks}, Rank: {result_rank}) for query: '{query}'")
             else:
-                 logging.warning(f"Could not find text for chunk index {chunk_index} in {original_path}, although search returned it.")
-                 # Still return search_completed and total_chunks if applicable, but results might be empty
-                 # Do not append to formatted_results if text is None
+                 logging.warning(f"Could not find text for chunk index {chunk_index} in book '{result_book_name}', although search returned it.")
+                 # Decide if we should still return total_chunks if text is None but book was identified
+                 # Let's return total_chunks=0 in this specific error case
+                 total_chunks = 0 
         else:
-            logging.info(f"No results found to return for query: '{query}' in '{book_filename}'")
-            # If no results, we might still want to know the total chunks if the file existed
-            # Let's try to load the original file just for the count if it wasn't loaded before
-            original_json = book_filename.replace('_embeded.json', '.json')
-            original_path = os.path.join('chunks_json', original_json)
+            logging.info(f"No results found to return for query: '{query}' across selected books.")
+            # No specific book identified, so total_chunks remains 0
             total_chunks = 0
-            if os.path.isfile(original_path):
-                 try:
-                    with open(original_path, 'r', encoding='utf-8') as f:
-                        original_chunks_data = json.load(f)
-                    total_chunks = len(original_chunks_data)
-                 except Exception as e:
-                     logging.error(f"Error reading {original_path} just for chunk count: {e}")
 
-        # Include the completion flag and total chunks in the response
+        # Return structure for the frontend
+        # Note: 'total_chunks' is now part of the result item if one is found
+        # If no result is found, formatted_results is empty, and total_chunks is 0 at the top level
         return jsonify({
-            "results": formatted_results, # Will be empty list if no chunk found
+            "results": formatted_results, # List containing 0 or 1 result dict
             "search_completed": search_completed_flag,
-            "total_chunks": total_chunks # Return total chunk count
+            "total_chunks": total_chunks if not formatted_results else formatted_results[0].get("total_chunks", 0) # Pass total chunks if result found, else 0
         })
     except Exception as e:
-        logging.error(f"Error during search for query '{query}' in '{book_filename}': {e}", exc_info=True)
-        # Indicate search did not complete successfully in the response
+        logging.error(f"Error during search for query '{query}': {e}", exc_info=True)
         return jsonify({"error": "An internal error occurred during search.", "search_completed": False}), 500
 
 @app.route('/feedback', methods=['POST'])
@@ -244,56 +274,58 @@ def get_chunk_text():
         return jsonify({"error": "Request must be JSON"}), 400
 
     data = request.get_json()
-    book_filename_embed = data.get('book_filename') # Expecting the _embeded.json name
+    # Frontend still sends the specific filename associated with the currently displayed result
+    book_filename_embed = data.get('book_filename') 
     chunk_index = data.get('chunk_index')
 
     if book_filename_embed is None or chunk_index is None:
         return jsonify({"error": "Missing 'book_filename' or 'chunk_index'"}), 400
-
-    try:
-        chunk_index = int(chunk_index)
-    except ValueError:
-        return jsonify({"error": "'chunk_index' must be an integer"}), 400
-
-    # Derive the original chunk filename
+        
+    # Security check
+    if '..' in book_filename_embed or '/' in book_filename_embed:
+         logging.warning(f"Attempted path traversal in get_chunk_text: {book_filename_embed}")
+         return jsonify({"error": "Invalid book filename"}), 400
+         
     if not book_filename_embed.endswith('_embeded.json'):
-         return jsonify({"error": "Invalid book filename format"}), 400
+        logging.warning(f"Invalid filename extension in get_chunk_text: {book_filename_embed}")
+        return jsonify({"error": f"Invalid book filename extension: {book_filename_embed}"}), 400
+
+    # Derive the original JSON filename (e.g., book_embeded.json -> book.json)
     original_json_filename = book_filename_embed.replace('_embeded.json', '.json')
     original_path = os.path.join('chunks_json', original_json_filename)
 
-    if '..' in original_json_filename or '/' in original_json_filename:
-         logging.warning(f"Attempted path traversal with derived filename: {original_json_filename}")
-         return jsonify({"error": "Invalid book filename"}), 400
+    chunk_text = None
+    total_chunks = 0 # Initialize count
 
-    if not os.path.isfile(original_path):
+    if os.path.isfile(original_path):
+        try:
+            with open(original_path, 'r', encoding='utf-8') as f:
+                original_chunks_data = json.load(f)
+            total_chunks = len(original_chunks_data) # Get total chunk count
+
+            # Find the requested chunk's text
+            for chunk_data in original_chunks_data:
+                if chunk_data.get('chunk_index') == chunk_index:
+                    chunk_text = chunk_data.get('text')
+                    break
+        except Exception as e:
+            logging.error(f"Error reading or processing chunk file {original_path}: {e}")
+            return jsonify({"error": "Failed to read chunk data"}), 500
+    else:
         logging.error(f"Original chunk file not found: {original_path}")
-        return jsonify({"error": "Book chunk data not found"}), 404
+        return jsonify({"error": "Chunk data file not found"}), 404
 
-    try:
-        with open(original_path, 'r', encoding='utf-8') as f:
-            original_chunks_data = json.load(f)
-
-        found_chunk = None
-        for chunk in original_chunks_data:
-            if chunk.get('chunk_index') == chunk_index:
-                found_chunk = chunk
-                break
-
-        if found_chunk:
-            return jsonify({
-                "text": found_chunk.get("text", "[Text not available]"),
-                "chunk_index": found_chunk.get("chunk_index"),
-            })
-        else:
-            logging.warning(f"Chunk index {chunk_index} not found in {original_path}")
-            return jsonify({"error": f"Chunk index {chunk_index} not found"}), 404
-
-    except json.JSONDecodeError:
-        logging.error(f"Could not decode JSON from: {original_path}")
-        return jsonify({"error": "Error reading book data"}), 500
-    except Exception as e:
-        logging.error(f"Error processing request for chunk {chunk_index} in {original_path}: {e}", exc_info=True)
-        return jsonify({"error": "An internal error occurred"}), 500
+    if chunk_text is not None:
+        logging.info(f"Retrieved text for Chunk {chunk_index} from {original_json_filename}")
+        return jsonify({
+            "text": chunk_text,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks # Also return total chunks for this book
+        })
+    else:
+        logging.warning(f"Chunk index {chunk_index} not found in {original_path}")
+        # Return total_chunks even if specific index not found, but indicate error
+        return jsonify({"error": f"Chunk index {chunk_index} not found", "total_chunks": total_chunks}), 404
 
 if __name__ == '__main__':
     # Ensure the embeddings directory exists

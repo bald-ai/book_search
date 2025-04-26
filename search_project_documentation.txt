@@ -21,7 +21,7 @@ The text is cleaned (excessive newlines/spaces removed).
 It uses `langchain` and `tiktoken` (v0.9.0+) to split text into chunks (target size, overlap).
 For each chunk, it saves its index (0-based) and text.
 The output is a JSON file per book (e.g., `Promise of Blood_full.json`).
-Each entry contains: `chunk_index`, `text`.
+Each entry contains: `book_name` (derived from filename), `chunk_index`, `text`.
 Note: Input file handling could be made more dynamic (e.g., command-line args).
 
 ---
@@ -33,38 +33,55 @@ Initializes the Cohere client.
 Loads chunked data, extracts texts, batches them, and generates embeddings (`embed-v4.0`, float).
 Combines original chunk data (index, text) with the generated embedding vector.
 Saves the combined data to a new output JSON file per book (e.g., `promise_of_blood_embeded.json`).
+The structure for each entry is: `book_name`, `chunk_index`, `text`, `embedding`.
 Note: Input file handling could be made more dynamic.
 
 ---
 Search Chunks (`search_chunks.py`):
-This script provides the `search_book_chunks` function used by the web application.
-It performs semantic search followed by LLM refinement to find the single best chunk.
-Steps:
+This script provides the asynchronous `search_book_chunks` function used by the web application.
+It now supports searching across *multiple* selected books using a concurrent, two-stage
+LLM refinement process.
+
+Stage 1: Concurrent Refinement per Book
+- Takes user query and a *list* of paths to selected books' embedding files.
 - Loads Cohere and DeepSeek API keys from `.env`.
-- Initializes Cohere (`ClientV2`) and DeepSeek (`openai` library) clients.
-- Takes user query and path to a specific book's embedding file as input.
-- Loads the specified book's embedding data.
-- Generates a query embedding (Cohere).
-- Performs vector search (dot product) to find the top N (currently 15) semantically similar chunks.
-- Formats the text of these top N chunks (identified by `chunk_index`) for the LLM.
-- Sends the query and formatted top N chunks to the DeepSeek chat model.
-- Prompts the LLM for step-by-step reasoning and selection of the single best `chunk_index`.
-- Parses the LLM response robustly using regex:
-    - Searches the entire response for the last occurrence of `Final Answer: chunk XX` (case-insensitive).
-    - Handles explicit `Final Answer: chunk none`.
-    - Extracts the integer chunk index.
-- Finds the data for the LLM-selected chunk index within the top N semantic results initially retrieved.
-- Determines the 0-based `rank` of this selected chunk within the top N list (e.g., rank 0 is the
-  best semantic match).
-- Returns a list containing the data dictionary for the single chunk selected by the LLM (or the
-  top semantic result as fallback). This dictionary contains the `chunk_index`, text (from the
-  embedding file), score, and the calculated `rank`.
-- **Important**: The `app.py` backend uses this result's `chunk_index` to load the actual display
-  text from the corresponding file in `chunks_json/`.
+- Initializes *asynchronous* Cohere (`AsyncClient`) and DeepSeek (`AsyncOpenAI`) clients.
+- **Concurrently** for each selected book (`asyncio.gather`):
+    - Loads only that book's embedding data.
+    - Generates a query embedding (async Cohere).
+    - Performs vector search (dot product) to find the top N (default 15) semantic matches.
+    - Loads the *full text* for these top N chunks from the corresponding `chunks_json/` file.
+    - Sends the query and formatted top N chunk *texts* to the DeepSeek chat model (async).
+    - Prompts the LLM for step-by-step reasoning and selection of the single best `chunk_index`
+      *for that specific book*.
+    - Parses the LLM response robustly (handles `None`, errors). If LLM fails/selects `None`,
+      it falls back to the top semantic result (rank 0) for that book.
+    - Stores the data dictionary of the selected candidate chunk (book name, chunk index, text
+      from embedding file, score, rank within the book's semantic results).
+
+Stage 2: Final Aggregation and Refinement (if >1 book searched)
+- Collects the best candidate data dictionaries from all successful Stage 1 tasks.
+- If only one book was searched, its Stage 1 result is returned directly.
+- If multiple candidates exist:
+    - Loads the *full text* for each candidate chunk from its respective `chunks_json/` file.
+    - Creates a new prompt containing the original user query and the texts of all candidate
+      chunks (clearly identified by book and index).
+    - Sends this combined prompt to the DeepSeek chat model in a *single*, final async call.
+    - Prompts the LLM to select the *overall best* candidate chunk from the provided list.
+    - Parses the response. If the LLM fails or provides an invalid choice, it falls back to the
+      candidate that had the best rank (and score as tie-breaker) from Stage 1.
+
+Output:
+- Returns a list containing the single data dictionary for the final selected chunk.
+- This dictionary includes `book_name`, `chunk_index`, `text` (from the embedding file),
+  `score` (from Stage 1 semantic search), and `rank` (from Stage 1 semantic search).
+- **Important**: `app.py` uses the returned `book_name` and `chunk_index` to load the actual
+  display text from the corresponding `chunks_json/` file.
+- Includes improved error handling for API calls (checks response structure, logs HTML errors).
 
 ---
 Web Application (`app.py` & `templates/index.html`):
-The web application uses Flask to serve a single-page interface (`index.html`) styled with Tailwind CSS.
+The web application uses Flask (with `async` support enabled) to serve a single-page interface.
 Key features:
 - Header with application title.
 - Dynamic Book Selection: Buttons are generated via JavaScript based on `*_embeded.json` files found
@@ -92,24 +109,21 @@ Key features:
 
 Backend (`app.py`):
 - Serves the main `index.html` page, passing the list of available books.
-- Provides a `/search` endpoint (POST) that:
-    - Receives the `query` and selected `book_filename` (currently one, potentially multiple later).
-    - **Logs the search**: Appends an entry to `all_queries.json` containing the `timestamp`, the
-      list of `selected_books` (filenames), and the raw `query`. This supports future analysis and
-      potential multi-book searches.
-    - Validates input and constructs the full path to the embedding file(s).
-    - Calls the `search_book_chunks` function from `search_chunks.py`.
-    - Takes the single result dictionary (containing `chunk_index`, `rank`, text from embedding file,
-      etc.) returned by the search function.
-    - **Crucially**, uses the returned `chunk_index` to open the corresponding original chunk file
-      in `chunks_json/` and reads the `text` field from that file.
+- Provides an *asynchronous* `/search` endpoint (POST) (`async def search`):
+    - Receives the `query` and a *list* of selected `book_filenames`.
+    - Logs the search query and selected books list to `all_queries.json`.
+    - Validates input and constructs full paths to the embedding files.
+    - Calls and *awaits* the `search_book_chunks` async function from `search_chunks.py`.
+    - Takes the single result dictionary returned by the search function.
+    - **Crucially**, uses the returned `book_name` and `chunk_index` to open the corresponding
+      original chunk file in `chunks_json/` and reads the `text` field from that file.
     - Creates a new result dictionary containing this text from `chunks_json/` and other relevant
-      metadata (`chunk_index`, `score`, `rank`, etc.).
+      metadata (`chunk_index`, `score`, `rank`, `total_chunks` for that book).
     - Returns this final result data as JSON to the frontend.
     - Includes basic logging and error handling.
 
 - Provides a `/get_chunk_text` endpoint (POST) that:
-    - Receives `book_filename` and `chunk_index`.
+    - Receives `book_filename` (of the currently displayed result) and `chunk_index`.
     - Reads the specified chunk's text from the corresponding `chunks_json/` file.
     - Returns the chunk data (text, index) as JSON.
 
@@ -174,13 +188,13 @@ Frontend (`index.html` JavaScript):
   - Sends a POST request with this data (including `rank`) to the `/feedback` endpoint.
   - Handles the response and potential errors, updating the UI (disabling buttons, showing message).
 
-Dependencies are managed through `requirements.txt` (including `flask`, `cohere`, `openai`, `numpy`,
-`python-dotenv`, etc.) and API keys via `.env`.
+Dependencies are managed through `requirements.txt` (including `flask[async]`, `cohere`,
+`openai`, `numpy`, `python-dotenv`, `asyncio`, etc.) and API keys via `.env`.
 
 To run the web application locally:
 1. Ensure Python 3.13+ and pip are installed.
 2. Create and activate a virtual environment (e.g., `python3 -m venv venv`, `source venv/bin/activate`).
-3. Install dependencies: `pip install -r requirements.txt`.
+3. Install dependencies: `pip install -r requirements.txt` (ensures `flask[async]` is installed).
 4. Create a `.env` file with your `COHERE_API_KEY` and `DEEPSEEK_API_KEY`.
 5. Ensure embedding files (`*_embeded.json`) are present in the `embedded_books/` directory.
 6. Run the Flask app: `python app.py`.
@@ -202,4 +216,5 @@ Future Expansion:
 - Make input file handling more dynamic in `manual_chunker.py` and `embed_chunks.py`.
 - Implement multi-book search functionality (backend already logs selected books as a list).
 - Potentially add user authentication and book management features.
+
 

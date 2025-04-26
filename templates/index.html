@@ -93,9 +93,18 @@
     </header>
 
     <section class="w-full max-w-3xl mb-8">
-        <h3 class="text-lg font-semibold text-gray-400 mb-4 text-center">Select Book to Search:</h3>
+        <h3 class="text-lg font-semibold text-gray-400 mb-4 text-center">Select Book(s) to Search:</h3>
         <div id="book-toggle-container" class="flex flex-wrap justify-center gap-3">
             <!-- Book buttons will be dynamically inserted here -->
+            {% for book in available_books %}
+            <button
+                class="book-toggle book-toggle-inactive px-4 py-2 rounded-full border-2 transition duration-150 ease-in-out text-sm font-medium"
+                data-book-filename="{{ book.filename }}"
+                data-book-title="{{ book.display_name }}"
+            >
+                {{ book.display_name }}
+            </button>
+            {% endfor %}
         </div>
     </section>
 
@@ -219,14 +228,12 @@
                 <div>
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">Result from: <span class="font-normal book-title"></span></h3>
                     <p class="text-sm text-gray-500">Chunk Index: <span class="chunk-index font-medium"></span></p>
-                    <!-- <p class="text-sm text-gray-500">Relevance Score: <span class="score"></span></p> -->
                 </div>
-                <!-- Feedback buttons removed from here -->
             </div>
             <p class="text-gray-700 whitespace-pre-wrap chunk-text"></p>
 
             <!-- Navigation Buttons -->
-            <div class="mt-4 pt-4 border-t border-gray-200 flex justify-between navigation-buttons" style="display: none;"> <!-- Hidden initially -->
+            <div class="mt-4 pt-4 border-t border-gray-200 flex justify-between navigation-buttons" style="display: none;">
                 <button class="prev-chunk-button px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
                     &larr; Previous Chunk
                 </button>
@@ -238,17 +245,9 @@
     </template>
 
     <script>
-        // --- Available Books (Dynamically Determined) ---
-        // In a real Flask app, this would be passed from the backend.
-        // For now, we simulate based on the files found.
-        const availableBooks = [
-            { filename: "promise_of_blood_embeded.json", title: "Promise of Blood" },
-            { filename: "the_crimson_campaign_embeded.json", title: "The Crimson Campaign" },
-            { filename: "the_autumn_republic_embeded.json", title: "The Autumn Republic" },
-            { filename: "sins_of_empire_embeded.json", title: "Sins of Empire" },
-            { filename: "wrath_of_empire_embeded.json", title: "Wrath of Empire" },
-            { filename: "blood_of_empire_embeded.json", title: "Blood of Empire" },
-        ];
+        // --- Available Books (Passed from Flask) ---
+        // eslint-disable-next-line no-undef
+        const availableBooks = JSON.parse('{{ available_books | tojson | safe }}');
 
         // --- DOM Elements ---
         const bookToggleContainer = document.getElementById('book-toggle-container');
@@ -257,353 +256,308 @@
         const resultsContainer = document.getElementById('results-container');
         const loadingIndicator = document.getElementById('loading-indicator');
         const selectBookPrompt = document.getElementById('select-book-prompt');
-        // --- NEW: Custom Clear Button Element ---
         const clearSearchButton = document.getElementById('clearSearchButton');
-        // --- State for Navigation ---
-        let currentChunkIndex = null;
-        let totalChunks = 0;
-        let currentFullChunkText = null; // Store the full text of the current chunk
         // --- Global Feedback Elements ---
         const globalFeedbackButtonsDiv = document.getElementById('global-feedback-buttons');
         const globalLikeButton = document.getElementById('global-like-button');
         const globalDislikeButton = document.getElementById('global-dislike-button');
         const globalFeedbackSentMessage = document.getElementById('global-feedback-sent-message');
-        let selectedBookFilename = null;
-        let selectedBookTitle = null;
-        // --- Navigation / trimming state (NEW) ---
-        let originalChunkIndex   = null;     // remember first result (x)
-        let chunkFullTextCache   = {};       // {index: fullChunkText}
-        let currentRank          = null;     // <<< Add state for rank
+        
+        // --- State ---
+        let currentChunkIndex = null;
+        let totalChunks = 0; // Note: This represents total chunks for the *result* book
+        let currentFullChunkText = null;
+        let originalChunkIndex = null;
+        let chunkFullTextCache = {};
+        let currentRank = null;
+        let selectedBookFilenames = []; // List of filenames selected for search
+        let currentResultBookFilename = null; // Filename associated with the displayed result
 
-        // --- Populate Book Toggles ---
-        availableBooks.forEach(book => {
-            const button = document.createElement('button');
-            button.className = 'book-toggle book-toggle-inactive px-4 py-2 rounded-full border-2 transition duration-150 ease-in-out text-sm font-medium';
-            button.dataset.bookFilename = book.filename;
-            button.dataset.bookTitle = book.title;
-            button.textContent = book.title;
-            bookToggleContainer.appendChild(button);
-        });
-
-        // --- Book Toggle Functionality ---
+        // --- Book Toggle Functionality (Multi-Select) ---
         const bookToggles = document.querySelectorAll('.book-toggle');
-
         bookToggles.forEach(button => {
             button.addEventListener('click', () => {
                 const bookFilename = button.dataset.bookFilename;
-                const bookTitle = button.dataset.bookTitle;
                 const isCurrentlyActive = button.classList.contains('book-toggle-active');
-
-                // Deactivate all buttons first
-                bookToggles.forEach(btn => {
-                    btn.classList.remove('book-toggle-active');
-                    btn.classList.add('book-toggle-inactive');
-                });
 
                 if (!isCurrentlyActive) {
                     button.classList.remove('book-toggle-inactive');
                     button.classList.add('book-toggle-active');
-                    selectedBookFilename = bookFilename;
-                    selectedBookTitle = bookTitle;
-                    searchInput.placeholder = `Search in ${bookTitle}...`;
+                    selectedBookFilenames.push(bookFilename);
+                } else {
+                    button.classList.remove('book-toggle-active');
+                    button.classList.add('book-toggle-inactive');
+                    selectedBookFilenames = selectedBookFilenames.filter(fn => fn !== bookFilename);
+                }
+
+                // Update UI based on selection
+                if (selectedBookFilenames.length > 0) {
+                     const selectedTitles = Array.from(bookToggles)
+                                             .filter(btn => selectedBookFilenames.includes(btn.dataset.bookFilename))
+                                             .map(btn => btn.dataset.bookTitle);
+                    searchInput.placeholder = `Searching in: ${selectedTitles.join(', ')}...`;
                     searchInput.disabled = false;
                     searchButton.disabled = false;
                     if(selectBookPrompt) selectBookPrompt.classList.add('hidden');
                 } else {
-                    // If clicking the active button, deactivate it and reset placeholder
-                    selectedBookFilename = null;
-                    selectedBookTitle = null;
-                    searchInput.placeholder = 'Select a book above and start searching...';
+                    searchInput.placeholder = 'Select book(s) above and start searching...';
                     searchInput.disabled = true;
                     searchButton.disabled = true;
                     if(selectBookPrompt) selectBookPrompt.classList.remove('hidden');
                 }
-                console.log('Selected book file:', selectedBookFilename);
-                // Clear previous results and reset navigation state when book selection changes
+                
+                console.log('Selected book files:', selectedBookFilenames);
                 resultsContainer.innerHTML = '';
                 currentChunkIndex = null;
                 totalChunks = 0;
-                if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; // Hide feedback buttons
+                currentResultBookFilename = null;
+                if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; 
                 if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
-                resetGlobalFeedbackButtons(); // Reset their state
-                currentRank = null; // <<< Reset rank on book change
+                resetGlobalFeedbackButtons(); 
+                currentRank = null; 
             });
         });
 
-        // --- NEW: Clear Button Logic ---
+        // --- Clear Search Button Logic ---
         if (searchInput && clearSearchButton) {
             searchInput.addEventListener('input', () => {
-                // Show button only if there is text
                 clearSearchButton.style.display = searchInput.value.length > 0 ? 'flex' : 'none';
             });
-
             clearSearchButton.addEventListener('click', () => {
-                searchInput.value = ''; // Clear the input
-                clearSearchButton.style.display = 'none'; // Hide the button
-                searchInput.focus(); // Optionally focus back on the input
-                // If clearing the input should also clear results, add that logic here
-                // resultsContainer.innerHTML = '';
-                // Reset other state if needed
+                searchInput.value = ''; 
+                clearSearchButton.style.display = 'none'; 
+                searchInput.focus(); 
             });
         }
 
-        // Disable search initially and ensure prompt is visible
+        // --- Initial State ---
         searchInput.disabled = true;
         searchButton.disabled = true;
         if(selectBookPrompt) selectBookPrompt.classList.remove('hidden');
 
-        // --- Function to Trigger Search --- (Refactored)
+        // --- Trigger Search Function ---
         async function triggerSearch() {
-            if (!selectedBookFilename || searchInput.value.trim() === '') {
-                console.log('Search not triggered: Book not selected or query empty.');
+            if (selectedBookFilenames.length === 0 || searchInput.value.trim() === '') {
+                console.log('Search not triggered: Book(s) not selected or query empty.');
                 return;
             }
-
             const query = searchInput.value.trim();
-            console.log(`Triggering search for: \"${query}\" in book: ${selectedBookFilename}`);
+            console.log(`Triggering search for: "${query}" in books: ${selectedBookFilenames.join(', ')}`);
 
-            // Show loading indicator and disable inputs
             resultsContainer.innerHTML = '';
             if(loadingIndicator) loadingIndicator.classList.remove('hidden');
             searchInput.disabled = true;
             searchButton.disabled = true;
             bookToggles.forEach(btn => btn.disabled = true);
-
-            console.log('%cStarting search process...', 'color: #a78bfa;'); // Purple color
+            console.log('%cStarting search process...', 'color: #a78bfa;');
 
             try {
                 const response = await fetch('/search', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ query: query, book_filename: selectedBookFilename })
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ query: query, book_filenames: selectedBookFilenames })
                 });
-
                 const responseData = await response.json();
-
                 if (!response.ok) {
-                    const errorMsg = responseData.error || `HTTP error! status: ${response.status}`;
-                    throw new Error(errorMsg);
+                    throw new Error(responseData.error || `HTTP error! status: ${response.status}`);
                 }
-
-                // Log based on the backend flag
-                if (responseData.search_completed) {
-                    console.log('%cLLM refinement step was likely attempted (search function completed).', 'color: #34d399;'); // Green color
-                } else {
-                    console.log('%cLLM refinement step likely not reached (search function did not complete).', 'color: #f87171;'); // Red color
-                }
-
-                // Adjust how results are accessed from the new response structure
-                displayResults(responseData.results || [], selectedBookTitle || selectedBookFilename.replace('_embeded.json', ''), responseData.total_chunks);
-
-                console.log('%cSearch complete.', 'color: #60a5fa;'); // Blue color
+                console.log(`%cSearch function ${responseData.search_completed ? 'completed' : 'did not complete'}.`, 
+                            responseData.search_completed ? 'color: #34d399;' : 'color: #f87171;');
+                
+                displayResults(responseData.results || []); // Pass results list
+                console.log('%cSearch display complete.', 'color: #60a5fa;');
 
             } catch (error) {
-                currentChunkIndex = null; // Reset state on error
+                currentChunkIndex = null; 
                 totalChunks = 0;
+                currentResultBookFilename = null;
                 console.error('Search failed:', error);
                 resultsContainer.innerHTML = '';
                 const errorMsgElement = document.createElement('p');
                 errorMsgElement.className = 'text-center text-red-400 italic';
                 errorMsgElement.textContent = `Search failed: ${error.message || 'Please try again.'}`;
-                if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; // Hide feedback buttons on error
+                if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; 
                 if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
                 resultsContainer.appendChild(errorMsgElement);
-                currentRank = null; // <<< Reset rank on error
+                currentRank = null; 
             } finally {
                 if(loadingIndicator) loadingIndicator.classList.add('hidden');
                 searchInput.disabled = false;
-                searchButton.disabled = !selectedBookFilename;
-                 bookToggles.forEach(btn => btn.disabled = false);
+                searchButton.disabled = selectedBookFilenames.length === 0; 
+                bookToggles.forEach(btn => btn.disabled = false);
             }
         }
 
-        // --- Event Listeners for Search ---
+        // --- Search Event Listeners ---
         if (searchInput) {
             searchInput.addEventListener('keypress', (event) => {
-                if (event.key === 'Enter') {
-                    triggerSearch();
-                }
+                if (event.key === 'Enter') triggerSearch();
             });
         }
-
         if (searchButton) {
-            searchButton.addEventListener('click', () => {
-                triggerSearch();
-            });
+            searchButton.addEventListener('click', triggerSearch);
         }
 
-        // --- Function to remove overlap ---
+        // --- Overlap Removal Function ---
         function removeOverlap(chunk1, chunk2) {
-            if (!chunk1 || !chunk2) return chunk2; // Handle edge cases
-
+            if (!chunk1 || !chunk2) return chunk2; 
             chunk1 = chunk1.trim();
             chunk2 = chunk2.trim();
             let maxOverlapLength = 0;
-
-            // Find the longest suffix of chunk1 that is a prefix of chunk2
             for (let i = 1; i <= Math.min(chunk1.length, chunk2.length); i++) {
-                const suffix = chunk1.substring(chunk1.length - i);
-                const prefix = chunk2.substring(0, i);
-                if (suffix === prefix) {
+                if (chunk1.endsWith(chunk2.substring(0, i))) {
                     maxOverlapLength = i;
                 }
             }
-
-            // Return chunk2 with the overlapping prefix removed
             if (maxOverlapLength > 0) {
-                // Be cautious: if overlap is almost the entire chunk, maybe don't remove?
-                // For now, remove whatever overlap is found.
-                // Consider adding a threshold if needed.
-                console.log(`Overlap found: ${maxOverlapLength} characters. Removing from start of next chunk.`);
+                console.log(`Overlap found: ${maxOverlapLength} chars. Removing.`);
                 return chunk2.substring(maxOverlapLength);
             }
-
-            console.log("No overlap found between current and next chunk.");
-            return chunk2; // No overlap found
+            return chunk2;
         }
-
-        // -- little util so we never fetch the same chunk twice --
-        async function getFullChunkText(index) {
-            if (chunkFullTextCache[index] !== undefined) return chunkFullTextCache[index];
-
-            const resp  = await fetch('/get_chunk_text', {
-                            method : 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body   : JSON.stringify({ book_filename: selectedBookFilename,
-                                                      chunk_index   : index })
-                         });
-
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-            const data  = await resp.json();
-            chunkFullTextCache[index] = data.text;
+        
+        // --- Get Full Chunk Text Helper (with context) ---
+        async function getFullChunkText(index, filename) {
+            const cacheKey = `${filename}-${index}`; 
+            if (chunkFullTextCache[cacheKey] !== undefined) return chunkFullTextCache[cacheKey];
+            if (!filename) throw new Error("Missing book context for chunk fetch.");
+            
+            const resp = await fetch('/get_chunk_text', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ book_filename: filename, chunk_index: index })
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching chunk ${index} from ${filename}`);
+            const data = await resp.json();
+            chunkFullTextCache[cacheKey] = data.text;
             return data.text;
         }
 
-        // --- Fetch + show a chunk, applying EXACT trimming rules ---
+        // --- Fetch and Display Adjacent Chunk (with context) ---
         async function fetchChunkText(targetIndex, direction) {
-            if (!selectedBookFilename || targetIndex === null) return;
+            if (!currentResultBookFilename || targetIndex === null) return;
 
-            const resultCard       = resultsContainer.querySelector('.result-card');
+            const resultCard = resultsContainer.querySelector('.result-card');
+            if (!resultCard) return; // Exit if result card not found
             const chunkTextElement = resultCard.querySelector('.chunk-text');
-            const chunkIndexElem   = resultCard.querySelector('.chunk-index');
-            const prevBtn          = resultCard.querySelector('.prev-chunk-button');
-            const nextBtn          = resultCard.querySelector('.next-chunk-button');
+            const chunkIndexElem = resultCard.querySelector('.chunk-index');
+            const prevBtn = resultCard.querySelector('.prev-chunk-button');
+            const nextBtn = resultCard.querySelector('.next-chunk-button');
 
             try {
-                /* ------- grab full text(s) we need ------- */
-                const targetFull = await getFullChunkText(targetIndex);   // chunkN-1 or chunkN+1 etc.
-                let   displayTxt = targetFull;                            // what we'll finally show
+                const targetFull = await getFullChunkText(targetIndex, currentResultBookFilename); 
+                let displayTxt = targetFull;                            
 
-                /* ---------- Decide whether to trim ---------- */
-                if (targetIndex !== originalChunkIndex) {                 // never trim original x
-                    if (direction === 'next') {
-                        // we need chunkN (the one we're coming FROM)
-                        const prevFull = await getFullChunkText(targetIndex - 1);
-                        displayTxt     = removeOverlap(prevFull, targetFull);
-
+                if (targetIndex !== originalChunkIndex) {                 
+                    if (direction === 'next' && targetIndex > 0) {
+                        const prevFull = await getFullChunkText(targetIndex - 1, currentResultBookFilename);
+                        displayTxt = removeOverlap(prevFull, targetFull);
                     } else if (direction === 'previous' && targetIndex > 0) {
-                        // we need chunkN-2
-                        // Fetch the text of the chunk *before* the one we are moving to (targetIndex - 1 == N-2)
-                        const prevPrevFull = await getFullChunkText(targetIndex - 1);
-                        // Remove overlap between N-2 and N-1 (the target)
-                        displayTxt         = removeOverlap(prevPrevFull, targetFull);
+                        const prevPrevFull = await getFullChunkText(targetIndex - 1, currentResultBookFilename);
+                        displayTxt = removeOverlap(prevPrevFull, targetFull);
+                    } else if (direction === 'previous' && targetIndex === 0) {
+                         // Fetching the very first chunk (index 0) when moving previous
+                         // No prior chunk to remove overlap from, just display targetFull
+                         displayTxt = targetFull;
                     }
                 }
 
-                /* ---------- push to UI ---------- */
-                chunkTextElement.textContent = displayTxt;
-                chunkIndexElem.textContent   = targetIndex;
+                if (chunkTextElement) chunkTextElement.textContent = displayTxt;
+                if (chunkIndexElem) chunkIndexElem.textContent = targetIndex;
 
-                // update navigation state
-                currentChunkIndex    = targetIndex;
-                currentFullChunkText = targetFull; // Always store the full text in state
+                currentChunkIndex = targetIndex;
+                currentFullChunkText = targetFull;
 
-                prevBtn.disabled = currentChunkIndex <= 0;
-                nextBtn.disabled = currentChunkIndex >= totalChunks - 1;
+                if (prevBtn) prevBtn.disabled = currentChunkIndex <= 0;
+                if (nextBtn) nextBtn.disabled = currentChunkIndex >= totalChunks - 1;
 
             } catch (err) {
                 console.error('Error fetching chunk:', err);
-                chunkTextElement.textContent = 'Error loading chunk.';
+                if (chunkTextElement) chunkTextElement.textContent = 'Error loading chunk.';
             }
         }
 
-        // --- Function to Display Results --- (Modified to call setupNavigationButtons)
-        function displayResults(results, bookTitle, totalChunkCount) {
-            resultsContainer.innerHTML = ''; // Clear previous results or loading
-            if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; // Hide global buttons initially
+        // --- Display Results Function ---
+        function displayResults(results) {
+            resultsContainer.innerHTML = ''; 
+            if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; 
             if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
-            resetGlobalFeedbackButtons(); // Ensure buttons are clickable
+            resetGlobalFeedbackButtons(); 
 
             if (!results || results.length === 0) {
                 resultsContainer.innerHTML = '<p class="text-gray-500">No results found.</p>';
-                currentRank = null; // <<< Reset rank if no results
+                currentRank = null; 
+                currentResultBookFilename = null;
                 return;
             }
 
-            // Assuming the backend now always returns a single best result in a list
-            const result = results[0];
-            // remember original chunk + cache it
-            originalChunkIndex        = result.chunk_index;
-            currentChunkIndex         = result.chunk_index;
-            totalChunks               = totalChunkCount;
-            currentFullChunkText      = result.text;
-            currentRank               = result.rank; // <<< Store the rank
+            const result = results[0]; // Expecting list with one item
+            
+            originalChunkIndex = result.chunk_index;
+            currentChunkIndex = result.chunk_index;
+            totalChunks = result.total_chunks;
+            currentFullChunkText = result.text;
+            currentRank = result.rank; 
+            
+            // Derive filename for context
+            const resultBookName = result.book_name;
+            const baseName = resultBookName.toLowerCase().replace(/ /g, '_');
+            currentResultBookFilename = `${baseName}_embeded.json`; 
+            if (!availableBooks.some(b => b.filename === currentResultBookFilename)) {
+                console.warn(`Derived filename ${currentResultBookFilename} from book name ${resultBookName} not found. Navigation/Feedback might fail.`);
+            } else {
+                 console.log(`Set result context filename: ${currentResultBookFilename}`);
+            }
 
-            chunkFullTextCache        = {};              // reset cache for a new search
-            chunkFullTextCache[originalChunkIndex] = result.text;
+            // Reset and prime cache
+            chunkFullTextCache = {};              
+            const cacheKey = `${currentResultBookFilename}-${originalChunkIndex}`;
+            chunkFullTextCache[cacheKey] = result.text;
 
+            // Clone and populate template
             const template = document.getElementById('resultTemplate');
             const resultCard = template.content.cloneNode(true).querySelector('.result-card');
-
-            resultCard.querySelector('.book-title').textContent = bookTitle;
-            resultCard.querySelector('.chunk-index').textContent = result.chunk_index;
-            resultCard.querySelector('.chunk-text').textContent = result.text; // Display original text first
-           // resultCard.querySelector('.score').textContent = result.score !== undefined ? result.score.toFixed(4) : 'N/A';
-
-            // Setup Navigation
-            setupNavigationButtons(resultCard, result.chunk_index, totalChunks);
-
-            resultsContainer.appendChild(resultCard);
-
-            // Show global feedback buttons now that a result is displayed
-            if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex';
+            if (resultCard) { // Ensure card was found
+                const titleEl = resultCard.querySelector('.book-title');
+                const indexEl = resultCard.querySelector('.chunk-index');
+                const textEl = resultCard.querySelector('.chunk-text');
+                if (titleEl) titleEl.textContent = result.book_name;
+                if (indexEl) indexEl.textContent = result.chunk_index;
+                if (textEl) textEl.textContent = result.text;
+                setupNavigationButtons(resultCard, result.chunk_index, result.total_chunks);
+                resultsContainer.appendChild(resultCard);
+                if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex';
+            } else {
+                 console.error("Could not find .result-card in template.");
+                 resultsContainer.innerHTML = '<p class="text-red-500">Error displaying result.</p>';
+            }
         }
 
-        // --- Function to Set Up Navigation Buttons --- (Modified to pass direction)
-        function setupNavigationButtons(cardElement, chunkIndex, totalChunks) {
+        // --- Set Up Navigation Buttons Function ---
+        function setupNavigationButtons(cardElement, chunkIndex, totalChunksForBook) {
             const navigationDiv = cardElement.querySelector('.navigation-buttons');
             const prevButton = cardElement.querySelector('.prev-chunk-button');
             const nextButton = cardElement.querySelector('.next-chunk-button');
+            if (!prevButton || !nextButton || !navigationDiv) return; 
 
-            if (!prevButton || !nextButton || !navigationDiv) return; // Safety check
-
-            navigationDiv.style.display = 'flex'; // Make sure buttons are visible
-
+            navigationDiv.style.display = 'flex'; 
             prevButton.disabled = chunkIndex <= 0;
-            nextButton.disabled = chunkIndex >= totalChunks - 1;
+            nextButton.disabled = chunkIndex >= totalChunksForBook - 1; 
 
-            // Remove previous listeners to prevent duplicates if called multiple times
-            prevButton.replaceWith(prevButton.cloneNode(true));
-            nextButton.replaceWith(nextButton.cloneNode(true));
-            // Get the new buttons after cloning
-            const newPrevButton = cardElement.querySelector('.prev-chunk-button');
-            const newNextButton = cardElement.querySelector('.next-chunk-button');
-
-
-            if (newPrevButton) {
-                 newPrevButton.addEventListener('click', () => fetchChunkText(currentChunkIndex - 1, 'previous')); // Pass direction
-                 newPrevButton.disabled = chunkIndex <= 0; // Ensure state is correct after clone
-            }
-             if (newNextButton) {
-                 newNextButton.addEventListener('click', () => fetchChunkText(currentChunkIndex + 1, 'next')); // Pass direction
-                 newNextButton.disabled = chunkIndex >= totalChunks - 1; // Ensure state is correct after clone
-            }
+            // Clone to remove old listeners
+            const newPrevButton = prevButton.cloneNode(true);
+            const newNextButton = nextButton.cloneNode(true);
+            prevButton.parentNode.replaceChild(newPrevButton, prevButton);
+            nextButton.parentNode.replaceChild(newNextButton, nextButton);
+            
+            // Add new listeners
+            newPrevButton.addEventListener('click', () => fetchChunkText(currentChunkIndex - 1, 'previous')); 
+            newNextButton.addEventListener('click', () => fetchChunkText(currentChunkIndex + 1, 'next')); 
+            newPrevButton.disabled = chunkIndex <= 0; // Re-apply disabled state
+            newNextButton.disabled = chunkIndex >= totalChunksForBook - 1; // Re-apply disabled state
         }
 
-        // --- Function to Reset Global Feedback Buttons --- (New)
+        // --- Reset Global Feedback Buttons Function ---
         function resetGlobalFeedbackButtons() {
              if (globalLikeButton) {
                  globalLikeButton.disabled = false;
@@ -615,115 +569,67 @@
              }
         }
 
-        // --- Global Feedback Button Logic ---
-        if (globalLikeButton) {
-            globalLikeButton.addEventListener('click', () => {
-                sendFeedback(true);
-            });
-        }
+        // --- Global Feedback Button Listeners ---
+        if (globalLikeButton) globalLikeButton.addEventListener('click', () => sendFeedback(true));
+        if (globalDislikeButton) globalDislikeButton.addEventListener('click', () => sendFeedback(false));
 
-        if (globalDislikeButton) {
-            globalDislikeButton.addEventListener('click', () => {
-                sendFeedback(false);
-            });
-        }
-
-        // --- Send Feedback (Modified for Global Buttons) --- (New)
+        // --- Send Feedback Function ---
         async function sendFeedback(isCorrect) {
-             // Use global state for query, index, and book
              const query = searchInput.value;
-             const chunkIndex = currentChunkIndex;
-             const bookFilename = selectedBookFilename;
-             const rank = currentRank; // <<< Get rank from global state
+             const chunkIndex = currentChunkIndex; 
+             const bookFilenameForFeedback = currentResultBookFilename; 
+             const rank = currentRank; 
+             const allSearchedBooks = selectedBookFilenames; // List of books searched
 
-             if (query === null || chunkIndex === null || bookFilename === null) {
-                 console.error('Cannot send feedback: Missing query, chunkIndex, or bookFilename in current state.');
-                 alert('Could not send feedback. Please try searching again.');
+             if (query === null || chunkIndex === null || bookFilenameForFeedback === null || !allSearchedBooks || allSearchedBooks.length === 0) {
+                 console.error('Cannot send feedback: Missing context (query, index, result book, or searched books list).');
+                 alert('Could not send feedback. State missing.');
                  return;
              }
 
-             // Create a list for selected_books
-             const selectedBooksList = [bookFilename];
+             console.log('Sending Feedback:', { query, chunkIndex, isCorrect, selectedBooks: allSearchedBooks, rank });
 
-             console.log('Calling sendFeedback with:', { query, chunkIndex, isCorrect, selectedBooks: selectedBooksList, rank });
-
-             // Disable buttons immediately
-             if (globalLikeButton) {
-                 globalLikeButton.disabled = true;
-                 globalLikeButton.classList.add('opacity-50', 'pointer-events-none');
-             }
-             if (globalDislikeButton) {
-                 globalDislikeButton.disabled = true;
-                 globalDislikeButton.classList.add('opacity-50', 'pointer-events-none');
-             }
-             // Hide buttons, show message
+             if (globalLikeButton) globalLikeButton.disabled = true;
+             if (globalDislikeButton) globalDislikeButton.disabled = true;
              if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none';
-             if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'inline'; // Or block
+             if (globalFeedbackSentMessage) {
+                globalFeedbackSentMessage.textContent = 'Sending...';
+                globalFeedbackSentMessage.classList.remove('text-red-400');
+                globalFeedbackSentMessage.style.display = 'inline';
+             }
 
              try {
                  const response = await fetch('/feedback', {
                      method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
-                     },
+                     headers: {'Content-Type': 'application/json'},
                      body: JSON.stringify({
                          query: query,
                          chunk_index: chunkIndex,
                          is_correct: isCorrect,
-                         selected_books: selectedBooksList,
+                         selected_books: allSearchedBooks, 
                          rank: rank
                      }),
                  });
-
-                 if (!response.ok) {
-                     console.error('Failed to send feedback:', response.statusText);
-                     // Optionally re-enable buttons or show error to user
-                     if (globalFeedbackSentMessage) {
-                         globalFeedbackSentMessage.textContent = 'Error saving feedback.';
-                         globalFeedbackSentMessage.classList.add('text-red-400');
-                         globalFeedbackSentMessage.style.display = 'inline'; // Or block
-                     }
-                     if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex'; // Show buttons again on error to allow retry
-                 } else {
-                     console.log('Feedback sent successfully.');
-                     // Keep buttons disabled and visually indicate success (already done by styling)
-                     if (globalFeedbackSentMessage) {
-                         globalFeedbackSentMessage.textContent = 'Feedback Sent!';
-                         globalFeedbackSentMessage.classList.remove('text-red-400');
-                     }
-                 }
+                 if (!response.ok) throw new Error(response.statusText);
+                 console.log('Feedback sent successfully.');
+                 if (globalFeedbackSentMessage) globalFeedbackSentMessage.textContent = 'Feedback Sent!';
              } catch (error) {
                  console.error('Error sending feedback:', error);
-                 // Reset buttons on error to allow retry?
-                 resetGlobalFeedbackButtons(); // Maybe allow retry on error?
+                 resetGlobalFeedbackButtons(); // Allow retry
                  if (globalFeedbackSentMessage) {
                      globalFeedbackSentMessage.textContent = 'Error saving feedback.';
                      globalFeedbackSentMessage.classList.add('text-red-400');
-                     globalFeedbackSentMessage.style.display = 'inline'; // Or block
                  }
-                 if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex'; // Show buttons again on error to allow retry
+                 // Optionally show buttons again on error
+                 if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex';
              }
          }
 
-        // --- Initialize Global Event Listeners --- (New)
+        // --- Initialize on DOM Load ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Remove redundant listeners from here
-            /*
-            if (globalLikeButton) {
-                globalLikeButton.addEventListener('click', () => {
-                    sendFeedback(true);
-                });
-            }
-            if (globalDislikeButton) {
-                globalDislikeButton.addEventListener('click', () => {
-                    sendFeedback(false);
-                });
-            }
-            */
-            // Initial state: hide feedback buttons
              if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none';
              if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
-             currentRank = null; // <<< Initialize rank state
+             currentRank = null; 
         });
 
     </script>
