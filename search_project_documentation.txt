@@ -45,7 +45,7 @@ LLM refinement process.
 Stage 1: Concurrent Refinement per Book
 - Takes user query and a *list* of paths to selected books' embedding files.
 - Loads Cohere and DeepSeek API keys from `.env`.
-- Initializes *asynchronous* Cohere (`AsyncClient`) and DeepSeek (`AsyncOpenAI`) clients.
+- Creates per-request asynchronous clients for Cohere (`AsyncClient`) and DeepSeek (`AsyncOpenAI`) using `async with` for proper cleanup.
 - **Concurrently** for each selected book (`asyncio.gather`):
     - Loads only that book's embedding data.
     - Generates a query embedding (async Cohere).
@@ -78,6 +78,10 @@ Output:
 - **Important**: `app.py` uses the returned `book_name` and `chunk_index` to load the actual
   display text from the corresponding `chunks_json/` file.
 - Includes improved error handling for API calls (checks response structure, logs HTML errors).
+- Clears and writes to `last_llm_output.txt` at the start of each
+  `search_book_chunks` call, recording only the LLM outputs for the latest query.
+- Appends all raw LLM responses to `last_llm_output.txt`, including Stage 1 per-book
+  responses (with book name and query context) and the final Stage 2 response.
 
 ---
 Web Application (`app.py` & `templates/index.html`):
@@ -100,6 +104,13 @@ Key features:
     - Clicking these buttons calls a new backend endpoint (`/get_chunk_text`) to fetch and display
       the text of the adjacent chunk without running a new search.
     - Buttons are disabled at the start/end of the book.
+    - **Clipboard Copy Button:** A clipboard icon button appears at the top right of the chunk
+      text box in the result card. Clicking this button copies the currently displayed chunk text
+      to the user's clipboard. A small tooltip appears near the button to confirm the text was
+      copied successfully.
+    - **Search Timer:** After each search, the elapsed time (in seconds) is displayed to the right
+      of the feedback buttons in the top Result heading. The timer is cleared when a new search
+      starts or if an error occurs.
 - Feedback:
     - Solid thumbs up/down buttons appear next to the main "Result" heading when a result is shown.
     - Clicking either button sends the current `query`, `book_filename`, `chunk_index`, and
@@ -188,33 +199,16 @@ Frontend (`index.html` JavaScript):
   - Sends a POST request with this data (including `rank`) to the `/feedback` endpoint.
   - Handles the response and potential errors, updating the UI (disabling buttons, showing message).
 
-Dependencies are managed through `requirements.txt` (including `flask[async]`, `cohere`,
-`openai`, `numpy`, `python-dotenv`, `asyncio`, etc.) and API keys via `.env`.
+- Contains clipboard copy logic:
+    - Each result card includes a clipboard icon button at the top right of the chunk text box.
+    - When clicked, this button copies the currently displayed chunk text to the clipboard using
+      the browser's clipboard API.
+    - A tooltip appears briefly to confirm the copy action, providing user feedback.
 
-To run the web application locally:
-1. Ensure Python 3.13+ and pip are installed.
-2. Create and activate a virtual environment (e.g., `python3 -m venv venv`, `source venv/bin/activate`).
-3. Install dependencies: `pip install -r requirements.txt` (ensures `flask[async]` is installed).
-4. Create a `.env` file with your `COHERE_API_KEY` and `DEEPSEEK_API_KEY`.
-5. Ensure embedding files (`*_embeded.json`) are present in the `embedded_books/` directory.
-6. Run the Flask app: `python app.py`.
-7. Access the application at `http://localhost:5000`.
+- Contains search timer logic:
+    - When a search is triggered, the timer starts.
+    - When results are displayed, the timer stops and the elapsed time (in seconds) is shown in
+      the UI next to the feedback buttons in the Result heading.
+    - The timer is cleared on new search or error.
 
-For production deployment:
-1. The application can be deployed on any WSGI-compatible server (e.g., Gunicorn).
-2. Recommended hosting options: Heroku, DigitalOcean App Platform, AWS, Google Cloud.
-3. Environment variables must be configured for production.
-4. Use a production-grade WSGI server.
-5. Set up proper logging and monitoring.
-6. Configure HTTPS.
-
-Future Expansion:
-- Implement backend logic to handle and store user feedback.
-- Analyze and utilize the collected feedback data (from `feedback_data.json`) and query data
-  (from `all_queries.json`). This includes using the `rank` data to evaluate semantic search performance.
-- Improve error handling and user messaging.
-- Make input file handling more dynamic in `manual_chunker.py` and `embed_chunks.py`.
-- Implement multi-book search functionality (backend already logs selected books as a list).
-- Potentially add user authentication and book management features.
-
-
+Dependencies are managed through `requirements.txt` (including `

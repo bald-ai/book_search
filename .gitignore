@@ -2,3 +2,4 @@ venv/
 .env
 all_queries.json
 working_memory.md
+feedback_data.json

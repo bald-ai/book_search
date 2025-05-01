@@ -98,6 +98,7 @@
             <!-- Book buttons will be dynamically inserted here -->
             {% for book in available_books %}
             <button
+                id="book-btn-{{ book.filename }}"
                 class="book-toggle book-toggle-inactive px-4 py-2 rounded-full border-2 transition duration-150 ease-in-out text-sm font-medium"
                 data-book-filename="{{ book.filename }}"
                 data-book-title="{{ book.display_name }}"
@@ -163,6 +164,8 @@
                         </svg>
                     </button>
                 </div>
+                <!-- Timer Display -->
+                <span id="search-timer-indicator" class="ml-4 text-sm text-gray-400"></span>
                 <!-- Moved Feedback Sent Message -->
                  <div id="global-feedback-sent-message" class="text-sm text-gray-500" style="display: none;">Feedback Sent!</div>
             </div>
@@ -230,11 +233,19 @@
             <div class="flex justify-between items-start mb-3">
                 <div>
                     <h3 class="text-lg font-semibold text-gray-800 mb-1">Result from: <span class="font-normal book-title"></span></h3>
-                    <p class="text-sm text-gray-500">Chunk Index: <span class="chunk-index font-medium"></span></p>
+                    <p class="text-sm text-gray-500">Chunk Index: <span id="chunk-index" class="chunk-index font-medium"></span></p>
+                </div>
+                <!-- Clipboard Button -->
+                <div class="relative">
+                    <button class="copy-chunk-btn p-2 rounded-full text-gray-500 hover:bg-purple-100 hover:text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400 transition duration-150" title="Copy chunk text to clipboard">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a3 3 0 006 0M9 5a3 3 0 016 0" />
+                        </svg>
+                    </button>
+                    <span class="copy-tooltip absolute right-0 top-0 mt-0 mr-12 bg-purple-600 text-white text-xs rounded px-2 py-1 opacity-0 pointer-events-none transition-opacity duration-300">Copied!</span>
                 </div>
             </div>
             <p class="text-gray-700 whitespace-pre-wrap chunk-text"></p>
-
             <!-- Navigation Buttons -->
             <div class="mt-4 pt-4 border-t border-gray-200 flex justify-between navigation-buttons" style="display: none;">
                 <button class="prev-chunk-button px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -275,6 +286,8 @@
         let currentRank = null;
         let selectedBookFilenames = []; // List of filenames selected for search
         let currentResultBookFilename = null; // Filename associated with the displayed result
+        // --- Search Time Tracker ---
+        let searchStartTime = null;
 
         // --- Book Toggle Functionality (Multi-Select) ---
         const bookToggles = document.querySelectorAll('.book-toggle');
@@ -354,6 +367,12 @@
             bookToggles.forEach(btn => btn.disabled = true);
             console.log('%cStarting search process...', 'color: #a78bfa;');
 
+            // Start timing
+            searchStartTime = performance.now();
+            // Clear timer display
+            const timerIndicator = document.getElementById('search-timer-indicator');
+            if (timerIndicator) timerIndicator.textContent = '';
+
             try {
                 const response = await fetch('/search', {
                     method: 'POST',
@@ -383,6 +402,9 @@
                 if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
                 resultsContainer.appendChild(errorMsgElement);
                 currentRank = null; 
+                // Clear timer display on error
+                const timerIndicator = document.getElementById('search-timer-indicator');
+                if (timerIndicator) timerIndicator.textContent = '';
             } finally {
                 if(loadingIndicator) loadingIndicator.classList.add('hidden');
                 searchInput.disabled = false;
@@ -487,6 +509,15 @@
             if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
             resetGlobalFeedbackButtons(); 
 
+            // --- Search Time Tracker: Log elapsed time ---
+            if (searchStartTime !== null) {
+                const elapsed = (performance.now() - searchStartTime) / 1000;
+                console.log(`%cSearch completed in ${elapsed.toFixed(2)} seconds`, 'color: #a3e635;');
+                const timerIndicator = document.getElementById('search-timer-indicator');
+                if (timerIndicator) timerIndicator.textContent = `Search: ${elapsed.toFixed(2)}s`;
+                searchStartTime = null;
+            }
+
             if (!results || results.length === 0) {
                 resultsContainer.innerHTML = '<p class="text-gray-500">No results found.</p>';
                 currentRank = null; 
@@ -530,6 +561,26 @@
                 setupNavigationButtons(resultCard, result.chunk_index, result.total_chunks);
                 resultsContainer.appendChild(resultCard);
                 if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'flex';
+                // Clipboard logic
+                const copyBtn = resultCard.querySelector('.copy-chunk-btn');
+                const chunkTextEl = resultCard.querySelector('.chunk-text');
+                const tooltip = resultCard.querySelector('.copy-tooltip');
+                if (copyBtn && chunkTextEl && tooltip) {
+                    copyBtn.addEventListener('click', async () => {
+                        try {
+                            await navigator.clipboard.writeText(chunkTextEl.textContent);
+                            tooltip.style.opacity = '1';
+                            setTimeout(() => { tooltip.style.opacity = '0'; }, 1200);
+                        } catch (err) {
+                            tooltip.textContent = 'Failed!';
+                            tooltip.style.opacity = '1';
+                            setTimeout(() => {
+                                tooltip.textContent = 'Copied!';
+                                tooltip.style.opacity = '0';
+                            }, 1200);
+                        }
+                    });
+                }
             } else {
                  console.error("Could not find .result-card in template.");
                  resultsContainer.innerHTML = '<p class="text-red-500">Error displaying result.</p>';
