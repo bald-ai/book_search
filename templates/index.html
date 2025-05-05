@@ -94,18 +94,21 @@
 
     <section class="w-full max-w-3xl mb-8">
         <h3 class="text-lg font-semibold text-gray-400 mb-4 text-center">Select Book(s) to Search:</h3>
-        <div id="book-toggle-container" class="flex flex-wrap justify-center gap-3">
+        <!-- Series/Book Multi-Select Dropdown -->
+        <div class="flex flex-wrap justify-center gap-3 mb-4">
+            <div class="relative" id="series-dropdown-container">
+                <button id="series-dropdown-toggle" class="bg-gray-800 border border-gray-700 text-gray-100 rounded px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 flex items-center gap-2">
+                    <span id="series-dropdown-label">Choose Series/Books</span>
+                    <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <div id="series-dropdown-menu" class="absolute left-0 mt-2 w-72 bg-gray-800 border border-gray-700 rounded shadow-lg z-50 hidden max-h-96 overflow-y-auto">
+                    <!-- Dropdown content will be rendered here -->
+                </div>
+            </div>
+        </div>
+        <!-- Optionally keep the book-toggle-container for reference, but hide it -->
+        <div id="book-toggle-container" class="flex flex-wrap justify-center gap-3 hidden">
             <!-- Book buttons will be dynamically inserted here -->
-            {% for book in available_books %}
-            <button
-                id="book-btn-{{ book.filename }}"
-                class="book-toggle book-toggle-inactive px-4 py-2 rounded-full border-2 transition duration-150 ease-in-out text-sm font-medium"
-                data-book-filename="{{ book.filename }}"
-                data-book-title="{{ book.display_name }}"
-            >
-                {{ book.display_name }}
-            </button>
-            {% endfor %}
         </div>
     </section>
 
@@ -260,17 +263,28 @@
 
     <script>
         // --- Available Books (Passed from Flask) ---
-        // eslint-disable-next-line no-undef
         const availableBooks = JSON.parse('{{ available_books | tojson | safe }}');
 
+        // --- Parse series/books into nested structure ---
+        const seriesMap = {};
+        availableBooks.forEach(book => {
+            const parts = book.filename.split('/');
+            const series = parts.length > 1 ? parts[0] : 'Other/Root';
+            if (!seriesMap[series]) seriesMap[series] = [];
+            seriesMap[series].push(book);
+        });
+        const seriesList = Object.keys(seriesMap).sort((a, b) => a.localeCompare(b));
+
         // --- DOM Elements ---
-        const bookToggleContainer = document.getElementById('book-toggle-container');
         const searchInput = document.getElementById('searchInput');
         const searchButton = document.getElementById('searchButton');
         const resultsContainer = document.getElementById('results-container');
         const loadingIndicator = document.getElementById('loading-indicator');
         const selectBookPrompt = document.getElementById('select-book-prompt');
         const clearSearchButton = document.getElementById('clearSearchButton');
+        const seriesDropdownToggle = document.getElementById('series-dropdown-toggle');
+        const seriesDropdownMenu = document.getElementById('series-dropdown-menu');
+        const seriesDropdownLabel = document.getElementById('series-dropdown-label');
         // --- Global Feedback Elements ---
         const globalFeedbackButtonsDiv = document.getElementById('global-feedback-buttons');
         const globalLikeButton = document.getElementById('global-like-button');
@@ -284,55 +298,140 @@
         let originalChunkIndex = null;
         let chunkFullTextCache = {};
         let currentRank = null;
-        let selectedBookFilenames = []; // List of filenames selected for search
+        let selectedBookFilenames = [];
+        let selectedSeries = new Set(); // For quick lookup
         let currentResultBookFilename = null; // Filename associated with the displayed result
         // --- Search Time Tracker ---
         let searchStartTime = null;
 
-        // --- Book Toggle Functionality (Multi-Select) ---
-        const bookToggles = document.querySelectorAll('.book-toggle');
-        bookToggles.forEach(button => {
-            button.addEventListener('click', () => {
-                const bookFilename = button.dataset.bookFilename;
-                const isCurrentlyActive = button.classList.contains('book-toggle-active');
-
-                if (!isCurrentlyActive) {
-                    button.classList.remove('book-toggle-inactive');
-                    button.classList.add('book-toggle-active');
-                    selectedBookFilenames.push(bookFilename);
-                } else {
-                    button.classList.remove('book-toggle-active');
-                    button.classList.add('book-toggle-inactive');
-                    selectedBookFilenames = selectedBookFilenames.filter(fn => fn !== bookFilename);
-                }
-
-                // Update UI based on selection
-                if (selectedBookFilenames.length > 0) {
-                     const selectedTitles = Array.from(bookToggles)
-                                             .filter(btn => selectedBookFilenames.includes(btn.dataset.bookFilename))
-                                             .map(btn => btn.dataset.bookTitle);
-                    searchInput.placeholder = `Searching in: ${selectedTitles.join(', ')}...`;
-                    searchInput.disabled = false;
-                    searchButton.disabled = false;
-                    if(selectBookPrompt) selectBookPrompt.classList.add('hidden');
-                } else {
-                    searchInput.placeholder = 'Select book(s) above and start searching...';
-                    searchInput.disabled = true;
-                    searchButton.disabled = true;
-                    if(selectBookPrompt) selectBookPrompt.classList.remove('hidden');
-                }
-                
-                console.log('Selected book files:', selectedBookFilenames);
-                resultsContainer.innerHTML = '';
-                currentChunkIndex = null;
-                totalChunks = 0;
-                currentResultBookFilename = null;
-                if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none'; 
-                if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
-                resetGlobalFeedbackButtons(); 
-                currentRank = null; 
+        // --- Render Series/Book Dropdown ---
+        function renderSeriesDropdown() {
+            seriesDropdownMenu.innerHTML = '';
+            seriesList.forEach(series => {
+                const books = seriesMap[series];
+                // Series row
+                const seriesId = `series-${series.replace(/[^a-zA-Z0-9]/g, '-')}`;
+                const allBooksSelected = books.every(b => selectedBookFilenames.includes(b.filename));
+                const someBooksSelected = books.some(b => selectedBookFilenames.includes(b.filename));
+                // Series checkbox
+                const seriesRow = document.createElement('div');
+                seriesRow.className = 'px-4 py-2 border-b border-gray-700 last:border-b-0';
+                seriesRow.innerHTML = `
+                    <label class="flex items-center cursor-pointer select-none">
+                        <input type="checkbox" class="series-checkbox mr-2" id="${seriesId}" ${allBooksSelected ? 'checked' : ''} ${someBooksSelected && !allBooksSelected ? 'indeterminate' : ''}>
+                        <span class="font-semibold text-purple-300">${series}</span>
+                    </label>
+                `;
+                // Set indeterminate state after adding to DOM
+                setTimeout(() => {
+                    const cb = seriesRow.querySelector('.series-checkbox');
+                    if (cb) cb.indeterminate = someBooksSelected && !allBooksSelected;
+                }, 0);
+                // Book checkboxes
+                books.forEach(book => {
+                    const bookId = `book-${book.filename.replace(/[^a-zA-Z0-9]/g, '-')}`;
+                    const bookRow = document.createElement('div');
+                    bookRow.className = 'pl-7 py-1';
+                    bookRow.innerHTML = `
+                        <label class="flex items-center cursor-pointer select-none">
+                            <input type="checkbox" class="book-checkbox mr-2" id="${bookId}" data-filename="${book.filename}" ${selectedBookFilenames.includes(book.filename) ? 'checked' : ''}>
+                            <span class="text-gray-200">${book.display_name}</span>
+                        </label>
+                    `;
+                    seriesRow.appendChild(bookRow);
+                });
+                seriesDropdownMenu.appendChild(seriesRow);
             });
+
+            // --- Add event listeners for checkboxes ---
+            // Series checkboxes
+            seriesDropdownMenu.querySelectorAll('.series-checkbox').forEach(cb => {
+                cb.addEventListener('change', e => {
+                    const series = cb.parentElement.textContent.trim();
+                    const books = seriesMap[series];
+                    if (cb.checked) {
+                        books.forEach(book => {
+                            if (!selectedBookFilenames.includes(book.filename)) selectedBookFilenames.push(book.filename);
+                        });
+                    } else {
+                        selectedBookFilenames = selectedBookFilenames.filter(fn => !books.some(b => b.filename === fn));
+                    }
+                    renderSeriesDropdown();
+                    updateSearchInputState();
+                });
+            });
+            // Book checkboxes
+            seriesDropdownMenu.querySelectorAll('.book-checkbox').forEach(cb => {
+                cb.addEventListener('change', e => {
+                    const filename = cb.dataset.filename;
+                    if (cb.checked) {
+                        if (!selectedBookFilenames.includes(filename)) selectedBookFilenames.push(filename);
+                    } else {
+                        selectedBookFilenames = selectedBookFilenames.filter(fn => fn !== filename);
+                    }
+                    renderSeriesDropdown();
+                    updateSearchInputState();
+                });
+            });
+        }
+
+        // --- Dropdown open/close logic ---
+        seriesDropdownToggle.addEventListener('click', () => {
+            seriesDropdownMenu.classList.toggle('hidden');
         });
+        document.addEventListener('click', (e) => {
+            if (!seriesDropdownMenu.contains(e.target) && !seriesDropdownToggle.contains(e.target)) {
+                seriesDropdownMenu.classList.add('hidden');
+            }
+        });
+
+        // --- Update Search Input State ---
+        function updateSearchInputState() {
+            // Update label
+            const selectedBooks = availableBooks.filter(b => selectedBookFilenames.includes(b.filename));
+            const selectedSeriesNames = seriesList.filter(series => {
+                const books = seriesMap[series];
+                return books.every(b => selectedBookFilenames.includes(b.filename));
+            });
+            if (selectedBooks.length === 0) {
+                seriesDropdownLabel.textContent = 'Choose Series/Books';
+                searchInput.placeholder = 'Select book(s) above and start searching...';
+                searchInput.disabled = true;
+                searchButton.disabled = true;
+                if (selectBookPrompt) selectBookPrompt.classList.remove('hidden');
+            } else {
+                let label = '';
+                if (selectedSeriesNames.length > 0) {
+                    label += selectedSeriesNames.join(', ');
+                }
+                const individualBooks = selectedBooks.filter(b => {
+                    const series = b.filename.split('/').length > 1 ? b.filename.split('/')[0] : 'Other/Root';
+                    return !selectedSeriesNames.includes(series);
+                });
+                if (individualBooks.length > 0) {
+                    if (label) label += ', ';
+                    label += individualBooks.map(b => b.display_name).join(', ');
+                }
+                seriesDropdownLabel.textContent = label;
+                searchInput.placeholder = `Searching in: ${label}...`;
+                searchInput.disabled = false;
+                searchButton.disabled = false;
+                if (selectBookPrompt) selectBookPrompt.classList.add('hidden');
+            }
+            resultsContainer.innerHTML = '';
+            // Reset other state as before
+            currentChunkIndex = null;
+            totalChunks = 0;
+            currentResultBookFilename = null;
+            if (globalFeedbackButtonsDiv) globalFeedbackButtonsDiv.style.display = 'none';
+            if (globalFeedbackSentMessage) globalFeedbackSentMessage.style.display = 'none';
+            resetGlobalFeedbackButtons();
+            currentRank = null;
+        }
+
+        // --- Initial Render ---
+        renderSeriesDropdown();
+        updateSearchInputState();
 
         // --- Clear Search Button Logic ---
         if (searchInput && clearSearchButton) {
@@ -345,11 +444,6 @@
                 searchInput.focus(); 
             });
         }
-
-        // --- Initial State ---
-        searchInput.disabled = true;
-        searchButton.disabled = true;
-        if(selectBookPrompt) selectBookPrompt.classList.remove('hidden');
 
         // --- Trigger Search Function ---
         async function triggerSearch() {
@@ -364,7 +458,6 @@
             if(loadingIndicator) loadingIndicator.classList.remove('hidden');
             searchInput.disabled = true;
             searchButton.disabled = true;
-            bookToggles.forEach(btn => btn.disabled = true);
             console.log('%cStarting search process...', 'color: #a78bfa;');
 
             // Start timing
@@ -409,7 +502,6 @@
                 if(loadingIndicator) loadingIndicator.classList.add('hidden');
                 searchInput.disabled = false;
                 searchButton.disabled = selectedBookFilenames.length === 0; 
-                bookToggles.forEach(btn => btn.disabled = false);
             }
         }
 
@@ -533,12 +625,10 @@
             currentFullChunkText = result.text;
             currentRank = result.rank; 
             
-            // Derive filename for context
-            const resultBookName = result.book_name;
-            const baseName = resultBookName.toLowerCase().replace(/ /g, '_');
-            currentResultBookFilename = `${baseName}_embeded.json`; 
+            // Use the book_filename from the backend result
+            currentResultBookFilename = result.book_filename;
             if (!availableBooks.some(b => b.filename === currentResultBookFilename)) {
-                console.warn(`Derived filename ${currentResultBookFilename} from book name ${resultBookName} not found. Navigation/Feedback might fail.`);
+                console.warn(`Result book_filename ${currentResultBookFilename} not found in availableBooks. Navigation/Feedback might fail.`);
             } else {
                  console.log(`Set result context filename: ${currentResultBookFilename}`);
             }

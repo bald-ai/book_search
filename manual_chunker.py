@@ -4,20 +4,15 @@ import os
 import json
 import pdfplumber
 import re
+import glob
 
 # --- Configuration ---
-# List of PDF files to process in the project folder
-INPUT_FILE_PATHS = [
-    "2. The Crimson Campaign.pdf",
-    "3. The Autumn Republic.pdf",
-    "4. Sins of Empire.pdf",
-    "5. Wrath of Empire.pdf",
-    "6. Blood of Empire.pdf",
-]
+# Process only the specified Harry Potter book
+input_files = [("Book_Collection/Harry Potter/Harry Potter and the Order of the Phoenix.pdf", "Harry Potter")]
+CHUNKS_JSON_DIR = "chunks_json"
 CHUNK_SIZE = 750
 CHUNK_OVERLAP = 50
 ENCODING_NAME = "cl100k_base"
-# Output JSON filenames will be derived from input filenames
 # --- End Configuration ---
 
 def extract_chapter_id(filename):
@@ -26,18 +21,16 @@ def extract_chapter_id(filename):
     name, _ = os.path.splitext(basename)
     return name
 
-def generate_output_filename(input_filename):
-    """Generates the output JSON filename based on the input PDF filename."""
+def generate_output_filename(input_filename, series_name):
+    """Generates the output JSON filename based on the input PDF filename and series name."""
     basename = os.path.basename(input_filename)
     name, _ = os.path.splitext(basename)
-    # Remove leading number and space (e.g., "2. ")
-    match = re.match(r"^\d+\.\s+(.*)", name)
-    if match:
-        clean_name = match.group(1)
-    else:
-        # Fallback if no leading number pattern is found
-        clean_name = name
-    return f"{clean_name}_full.json"
+    # Lowercase, underscores for spaces
+    clean_name = name.lower().replace(" ", "_")
+    output_dir = os.path.join(CHUNKS_JSON_DIR, series_name)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    return os.path.join(output_dir, f"{clean_name}.json"), clean_name
 
 def read_and_extract_text_from_pdf(file_path):
     try:
@@ -89,69 +82,46 @@ def seconds_to_hms(seconds):
 
 def main():
     processed_files = 0
-    for input_file_path in INPUT_FILE_PATHS:
+    for input_file_path, series_name in input_files:
         output_chunks = []  # Reset list for each book
-
         # Check if input file exists
         if not os.path.isfile(input_file_path):
             print(f"--- Skipping: Input file not found - {input_file_path} ---")
-            # Attempt to create the base directory if it doesn't exist, as a helper
-            base_dir = os.path.dirname(input_file_path) if os.path.dirname(input_file_path) else '.'
-            if not os.path.exists(base_dir):
-                try:
-                    os.makedirs(base_dir)
-                    print(f"Created directory: {base_dir}")
-                    print(f"Please place '{os.path.basename(input_file_path)}' inside '{base_dir}' and run again.")
-                except Exception as e:
-                    print(f"Error: Could not create directory {base_dir}: {e}")
             continue # Skip to the next file
-
         print(f"\n--- Processing: {input_file_path} ---")
-        output_json_file = generate_output_filename(input_file_path)
+        output_json_file, book_name = generate_output_filename(input_file_path, series_name)
         print(f"Output will be saved to: {output_json_file}")
-
-        chapter_id = extract_chapter_id(input_file_path) # Although chapter_id isn't used later, keeping extraction logic
+        chapter_id = extract_chapter_id(input_file_path)
         print(f"Extracted Document ID: {chapter_id}")
-
         book_text = read_and_extract_text_from_pdf(input_file_path)
         if not book_text:
             print(f"Could not read or extract text from {input_file_path}. Skipping.")
             continue # Skip to the next file
-
-        # Calculate total word count
         words = book_text.split()
         total_words = len(words)
         print(f"Total word count in book: {total_words}")
-
-        # Audio duration calculation is removed as it was specific to 'Promise of Blood'
-        # If needed per book, this would require a lookup mechanism
-
         chunks, _ = chunk_text_by_tokens(
             text=book_text,
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP,
             encoding_name=ENCODING_NAME
         )
-
         if chunks:
             print(f"Generated {len(chunks)} chunks for the book.")
             num_chunks = len(chunks)
             for i, chunk_text in enumerate(chunks):
                 chunk_text = chunk_text.strip()
-                # Only add non-empty chunks
                 if chunk_text:
                     chunk_data = {
+                        "book_name": book_name,
                         "chunk_index": i,
                         "text": chunk_text
                     }
                     output_chunks.append(chunk_data)
                 else:
                     print(f"Warning: Empty chunk generated at index {i} for {input_file_path}, skipping.")
-
-
         else:
             print(f"No chunks were generated for the book.")
-
         # Save the chunks for the current book
         if output_chunks:
             print(f"\nSaving {len(output_chunks)} chunks to {output_json_file}...")
@@ -164,8 +134,7 @@ def main():
                 print(f"Error saving chunks to JSON for {input_file_path}: {e}")
         else:
             print(f"\nNo valid chunks were generated or processed for {input_file_path}.")
-
-    print(f"\n--- Processing Complete. Processed {processed_files} out of {len(INPUT_FILE_PATHS)} files. ---")
+    print(f"\n--- Processing Complete. Processed {processed_files} out of {len(input_files)} files. ---")
 
 
 if __name__ == "__main__":

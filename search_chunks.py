@@ -72,23 +72,25 @@ if not SELECTED_API_KEY:
 
 
 # --- Helper Function to Load Chunk Text ---
-def load_chunk_text(book_filename_base: str, chunk_index: int) -> str | None:
-    """Loads the text for a specific chunk from its JSON file."""
-    json_filename = f"{book_filename_base}.json"
-    file_path = CHUNKS_JSON_DIR / json_filename
+def load_chunk_text(embeddings_file_path: str, chunk_index: int) -> str | None:
+    """Loads the text for a specific chunk from its JSON file, using the embedding file path to preserve subfolders."""
+    # Replace 'embedded_books' with 'chunks_json' and '_embeded.json' with '.json'
+    chunk_file_path = (
+        Path(str(embeddings_file_path).replace('embedded_books', 'chunks_json').replace('_embeded.json', '.json'))
+    )
     try:
-        if not file_path.is_file():
-            logging.warning(f"Original chunk file not found: {file_path}")
+        if not chunk_file_path.is_file():
+            logging.warning(f"Original chunk file not found: {chunk_file_path}")
             return None
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(chunk_file_path, 'r', encoding='utf-8') as f:
             chunks_data = json.load(f)
         for chunk in chunks_data:
             if chunk.get('chunk_index') == chunk_index:
                 return chunk.get('text')
-        logging.warning(f"Chunk index {chunk_index} not found in {file_path}")
+        logging.warning(f"Chunk index {chunk_index} not found in {chunk_file_path}")
         return None
     except Exception as e:
-        logging.error(f"Error loading chunk text from {file_path} for index {chunk_index}: {e}", exc_info=True)
+        logging.error(f"Error loading chunk text from {chunk_file_path} for index {chunk_index}: {e}", exc_info=True)
         return None
 
 
@@ -279,7 +281,7 @@ async def _process_single_book(query: str, embeddings_file_path: str, top_n: int
             chunk_index = item_data.get('chunk_index', -1)
             score = float(scores[idx])
             # Load text from chunks_json for the LLM
-            chunk_text = load_chunk_text(book_filename_base, chunk_index)
+            chunk_text = load_chunk_text(embeddings_file_path, chunk_index)
             if chunk_text is None:
                 logging.warning(f"[Book: {book_filename_base}] Could not load text for chunk {chunk_index} for LLM.")
                 text_for_llm = item_data.get('text', '') # Fallback to text in embedding file

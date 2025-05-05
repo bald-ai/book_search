@@ -76,7 +76,7 @@ Output:
 - This dictionary includes `book_name`, `chunk_index`, `text` (from the embedding file),
   `score` (from Stage 1 semantic search), and `rank` (from Stage 1 semantic search).
 - **Important**: `app.py` uses the returned `book_name` and `chunk_index` to load the actual
-  display text from the corresponding `chunks_json/` file.
+  display text from the corresponding `chunks_json/` file. The subfolder structure is preserved.
 - Includes improved error handling for API calls (checks response structure, logs HTML errors).
 - Clears and writes to `last_llm_output.txt` at the start of each
   `search_book_chunks` call, recording only the LLM outputs for the latest query.
@@ -89,7 +89,7 @@ The web application uses Flask (with `async` support enabled) to serve a single-
 Key features:
 - Header with application title.
 - Dynamic Book Selection: Buttons are generated via JavaScript based on `*_embeded.json` files found
-  in the `embedded_books/` directory.
+  recursively in the `embedded_books/` directory (including subfolders for trilogies/series).
 - Search Bar & Button: Input field for queries and an explicit Search button. These are disabled
   until a book is selected.
 - Book Selection Prompt: A message prompts the user to select a book if none is active.
@@ -98,8 +98,12 @@ Key features:
 - Result Display & Navigation:
     - Shows the single text chunk returned by the backend.
     - The backend (`app.py` /search route) takes the `chunk_index` from `search_chunks`, reads
-      the text from the corresponding file in `chunks_json/`, and sends this text and the total
+      the text from the corresponding file in `chunks_json/` (using the same subfolder structure as in embedded_books/), and sends this text and the total
       chunk count for the book to the frontend.
+    - The backend now always includes the full relative `book_filename` (including any series/subfolder)
+      in the search result. The frontend uses this exact `book_filename` for all navigation and chunk
+      fetches (such as next/previous chunk), instead of reconstructing it from the book name. This ensures
+      correct handling of nested series folders for navigation and feedback.
     - "Previous Chunk" and "Next Chunk" buttons appear below the result text.
     - Clicking these buttons calls a new backend endpoint (`/get_chunk_text`) to fetch and display
       the text of the adjacent chunk without running a new search.
@@ -121,25 +125,25 @@ Key features:
 Backend (`app.py`):
 - Serves the main `index.html` page, passing the list of available books.
 - Provides an *asynchronous* `/search` endpoint (POST) (`async def search`):
-    - Receives the `query` and a *list* of selected `book_filenames`.
+    - Receives the `query` and a *list* of selected `book_filenames` (relative paths, including subfolders).
     - Logs the search query and selected books list to `all_queries.json`.
-    - Validates input and constructs full paths to the embedding files.
+    - Validates input and constructs full paths to the embedding files (using subfolder structure).
     - Calls and *awaits* the `search_book_chunks` async function from `search_chunks.py`.
     - Takes the single result dictionary returned by the search function.
     - **Crucially**, uses the returned `book_name` and `chunk_index` to open the corresponding
-      original chunk file in `chunks_json/` and reads the `text` field from that file.
+      original chunk file in `chunks_json/` (using the same subfolder structure as in embedded_books/) and reads the `text` field from that file.
     - Creates a new result dictionary containing this text from `chunks_json/` and other relevant
       metadata (`chunk_index`, `score`, `rank`, `total_chunks` for that book).
     - Returns this final result data as JSON to the frontend.
     - Includes basic logging and error handling.
 
 - Provides a `/get_chunk_text` endpoint (POST) that:
-    - Receives `book_filename` (of the currently displayed result) and `chunk_index`.
-    - Reads the specified chunk's text from the corresponding `chunks_json/` file.
+    - Receives `book_filename` (relative path, including subfolders) and `chunk_index`.
+    - Reads the specified chunk's text from the corresponding `chunks_json/` file (using the same subfolder structure as in embedded_books/).
     - Returns the chunk data (text, index) as JSON.
 
 - Provides a `/feedback` endpoint (POST) that:
-  - Receives `query`, `selected_books` (list), `chunk_index`, `is_correct`, and `rank` as JSON.
+  - Receives `query`, `selected_books` (list of relative paths), `chunk_index`, `is_correct`, and `rank` as JSON.
   - The `rank` represents the 0-based position of the displayed chunk within the initial top N
     semantic search results before LLM refinement.
   - Validates the input data, including checking that `rank` is null or a non-negative integer.
@@ -149,66 +153,20 @@ Backend (`app.py`):
   - Returns a success message.
 
 Frontend (`index.html` JavaScript):
-- Dynamically creates book selection buttons based on data passed from Flask.
-- Handles book selection state (only one active), updates search bar placeholder, enables/disables
-  search input/button, and shows/hides the 'Select Book' prompt.
-- Contains `triggerSearch` function called on Enter/button click:
-    - Validates that a book is selected and a query exists.
-    - Shows loading indicator, disables inputs.
-    - Sends `query` and `book_filename` to the `/search` backend endpoint using `fetch`.
-    - Calls `displayResults` with the response.
-    - Hides loading indicator, re-enables inputs in a `finally` block.
-- Contains `displayResults` function:
-    - Clears previous results/loading indicator.
-    - Handles 'No results found' or error messages.
-    - Clones a hidden HTML template for the result card.
-    - Populates the card with the text, book title, and chunk index.
-    - Initializes state for navigation: remembers the original chunk index (`originalChunkIndex`)
-      and resets a cache for full chunk text (`chunkFullTextCache`). Stores the initial `rank`
-      received from the backend in `currentRank`. The original chunk's full text is added to the cache.
-    - Shows the global feedback buttons next to the "Result" heading.
-    - Appends the card to the results area.
-    - Sets up event listeners for the "Previous Chunk" and "Next Chunk" buttons, enabling/
-      disabling them based on the current index and total chunk count.
-
-- Contains `getFullChunkText` helper async function:
-    - Checks if the requested chunk index's full text is already in `chunkFullTextCache`.
-    - If cached, returns the cached text.
-    - If not cached, calls the `/get_chunk_text` endpoint to fetch the full text.
-    - Stores the fetched full text in the cache before returning it.
-
-- Contains `fetchChunkText` async function:
-    - Called by navigation buttons ('previous' or 'next').
-    - Uses `getFullChunkText` to retrieve the full text of the target chunk.
-    - Implements specific overlap trimming logic:
-        - If the target chunk *is* the `originalChunkIndex`, its full text is always displayed.
-        - If navigating 'next' (from N to N+1), uses `getFullChunkText` to get chunk N's text
-          and displays chunk N+1 after removing overlap: `removeOverlap(textN, textN+1)`.
-        - If navigating 'previous' (from N to N-1), uses `getFullChunkText` to get chunk N-2's
-          text and displays chunk N-1 after removing overlap: `removeOverlap(textN-2, textN-1)`.
-    - Updates the result card content with the (potentially trimmed) text and target index.
-    - Updates the `currentChunkIndex` and stores the *full* target text in `currentFullChunkText`.
-    - Updates the navigation button states.
-
-- Contains global feedback button listeners (setup on page load):
-    - Added to the thumbs up/down buttons next to the "Result" heading.
-    - When clicked, call the `sendFeedback` function.
-
-- Contains `sendFeedback` async function:
-  - Reads current `query`, `chunk_index`, `book_filename`, and `rank` from the page state.
-  - Sends a POST request with this data (including `rank`) to the `/feedback` endpoint.
-  - Handles the response and potential errors, updating the UI (disabling buttons, showing message).
-
-- Contains clipboard copy logic:
-    - Each result card includes a clipboard icon button at the top right of the chunk text box.
-    - When clicked, this button copies the currently displayed chunk text to the clipboard using
-      the browser's clipboard API.
-    - A tooltip appears briefly to confirm the copy action, providing user feedback.
-
-- Contains search timer logic:
-    - When a search is triggered, the timer starts.
-    - When results are displayed, the timer stops and the elapsed time (in seconds) is shown in
-      the UI next to the feedback buttons in the Result heading.
-    - The timer is cleared on new search or error.
+- Users select books to search using a custom dropdown menu at the top of the search area.
+- The dropdown displays all series (folders) as groups, each with a checkbox to select or deselect
+  the entire series at once.
+- Each book is listed under its series with its own checkbox, allowing for individual selection.
+- Users can select any combination of series and/or individual books. This is a true multi-select
+  interface: you can search across multiple series, a single series, or just a few books from any
+  series.
+- The dropdown label updates to show the current selection (series and/or books).
+- The search input and logic use the union of all selected books for the search.
+- The UI is dynamic: as you add new series or books to the backend, they will automatically appear
+  in the dropdown menu, grouped by series.
+- The old folder picker and toggle-all button have been replaced by this more flexible, nested
+  multi-select dropdown.
+- The book toggle area is now hidden, as all selection is handled via the dropdown.
+- The rest of the search and feedback UI remains unchanged.
 
 Dependencies are managed through `requirements.txt` (including `
